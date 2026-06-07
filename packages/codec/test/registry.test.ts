@@ -5,6 +5,10 @@
  *   1. Raw schema-free decode + SchemaIndex annotation — protolab's path.
  *   2. ProtoMsg(MsgBody).decode — Layer 1 round-trip wire decode.
  *   3. decodeElement — Layer 2 dispatch to TextElement.
+ *
+ * Also covers ProtoMsg.encode's automatic default injection (category-1
+ * envelope flags like 45102 must appear on the wire even when the upper
+ * layer didn't supply them).
  */
 
 import { describe, it, expect } from 'vitest';
@@ -86,7 +90,8 @@ describe('typed decode via ProtoMsg + decodeElement', () => {
     if (el.kind === 'text') {
       expect(el.content).toBe('呜呜呜');
       expect(el.elementId).toBe(7638353204859217953n);
-      expect(el.reserve).toBe(0);
+      // No `reserve` field — 45102 is category 1, not exposed to element layer.
+      expect((el as Record<string, unknown>).reserve).toBeUndefined();
     }
   });
 
@@ -101,8 +106,51 @@ describe('typed decode via ProtoMsg + decodeElement', () => {
   });
 });
 
-describe('ProtoField default behavior', () => {
-  it('omits truly optional fields (no default) on encode round-trip', () => {
+describe('ProtoMsg auto-default injection', () => {
+  it('emits 45102 = 0 even when caller omits textReserve', () => {
+    const codec = new ProtoMsg(ElementWire);
+    const bytes = codec.encode({
+      elementId: 1n,
+      elementType: ElementType.TEXT,
+      textContent: 'hi',
+      // textReserve intentionally omitted
+    });
+    // Decode the bytes back via raw to inspect what was actually emitted.
+    const raw = decode(bytes);
+    const byTag = new Map(raw.map((f) => [f.tag, f]));
+    expect(byTag.has(45102)).toBe(true);
+    const g = byTag.get(45102)!.guesses.find((x) => x.kind === 'varint-uint64');
+    expect(g?.kind).toBe('varint-uint64');
+    if (g?.kind === 'varint-uint64') expect(g.value).toBe(0n);
+  });
+
+  it('propagates defaults through nested repeated messages (MsgBody → ElementWire)', () => {
+    const bytes = new ProtoMsg(MsgBody).encode({
+      elements: [
+        { elementId: 1n, elementType: ElementType.TEXT, textContent: 'x' },
+      ],
+    });
+    const back = new ProtoMsg(MsgBody).decode(bytes);
+    expect(back.elements![0]!.textReserve).toBe(0);
+  });
+
+  it('does not emit category-2 fields without explicit caller values', () => {
+    const codec = new ProtoMsg(ElementWire);
+    const bytes = codec.encode({
+      elementId: 1n,
+      elementType: ElementType.TEXT,
+      textContent: 'hi',
+    });
+    const raw = decode(bytes);
+    const tags = new Set(raw.map((f) => f.tag));
+    // No default declared on 45103..45112 or 49154/5 → must not appear.
+    expect(tags.has(45103)).toBe(false);
+    expect(tags.has(45110)).toBe(false);
+    expect(tags.has(49154)).toBe(false);
+    expect(tags.has(49155)).toBe(false);
+  });
+
+  it('omits truly optional fields with no default on round-trip', () => {
     const codec = new ProtoMsg(ElementWire);
     const bytes = codec.encode({
       elementId: 1n,

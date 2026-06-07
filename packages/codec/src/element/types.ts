@@ -34,7 +34,6 @@ export interface BaseElementFields {
 export interface TextElement extends BaseElementFields {
   kind: 'text';
   content: string;
-  reserve?: number;
 }
 
 /**

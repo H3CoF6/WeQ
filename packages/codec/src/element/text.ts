@@ -7,11 +7,11 @@
  *   3. Add a sibling file (e.g. `face.ts`) with `fromWire` and `toWire`.
  *   4. Register the pair in `registry.ts`.
  *
- * `fromWire` reads only the fields the upper layer cares about — everything
- * else on the wire is dropped. `toWire` constructs a wire envelope with
- * `elementType` set + the type-specific payload + any common fields the
- * element carries. envelope flags with `default` values in the schema are
- * filled in by the protobuf-ts runtime.
+ * `fromWire` reads only the fields the upper layer cares about — every
+ * other wire field is dropped (category 1 envelope flags get re-injected
+ * on encode via the schema's `default`; category 2 fields stay dropped).
+ * `toWire` constructs a wire envelope with `elementType` set + the
+ * type-specific payload + any common fields the element carries.
  */
 
 import type { ProtoDecodeStructType, ProtoEncodeStructType } from '../core';
@@ -25,7 +25,6 @@ export function fromWire(wire: ProtoDecodeStructType<typeof ElementWire>): TextE
     isSender: wire.isSender,
     subType: wire.subType,
     content: wire.textContent ?? '',
-    reserve: wire.textReserve,
   };
 }
 
@@ -36,6 +35,6 @@ export function toWire(el: TextElement): ProtoEncodeStructType<typeof ElementWir
     isSender: el.isSender,
     subType: el.subType,
     textContent: el.content,
-    textReserve: el.reserve,
+    // textReserve (45102) auto-injected by ProtoMsg.encode via schema default.
   };
 }
