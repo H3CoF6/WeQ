@@ -16,7 +16,8 @@ import {
   Layout,
   Sun,
   Moon,
-  Monitor
+  Monitor,
+  RefreshCw
 } from 'lucide-react';
 import { cn } from './lib/utils';
 
@@ -106,6 +107,15 @@ export default function App() {
       .then(setSamples)
       .catch((e: unknown) => setErr(String(e)));
   }, [opened, table, column, dbPath, key]);
+
+  function refreshSamples() {
+    if (!opened || !table || !column) return;
+    setSelected(null);
+    window.protolab
+      .sampleColumn({ dbPath, key, table, column, limit: 50 })
+      .then(setSamples)
+      .catch((e: unknown) => setErr(String(e)));
+  }
 
   const annotated = useMemo(() => {
     if (!selected) return null;
@@ -266,10 +276,18 @@ export default function App() {
 
             {/* Samples */}
             <div className="flex-1 flex flex-col min-h-0">
-              <div className="flex items-center gap-1.5 px-3.5 mb-1 shrink-0">
+              <div className="flex items-center justify-between px-3.5 mb-1 shrink-0">
                 <span className="text-[10px] font-medium uppercase tracking-wider text-muted flex items-center gap-1.5">
                   <FileCode className="w-3 h-3" /> Samples
                 </span>
+                <button
+                  onClick={refreshSamples}
+                  className="p-1 rounded hover:bg-accent text-muted hover:text-primary transition-colors disabled:opacity-30"
+                  disabled={!column}
+                  title="Refresh"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                </button>
               </div>
               <div className="flex-1 overflow-y-auto space-y-px custom-scrollbar px-2 pb-2">
                 {!column && <div className="h-full flex items-center justify-center"><p className="text-xs text-muted/40 italic">Select a column</p></div>}

@@ -268,7 +268,7 @@ function DetailModal({ open, onOpenChange, node }: { open: boolean, onOpenChange
                         <Copy className="w-3 h-3" />
                       </button>
                     </div>
-                    <div className="text-sm font-mono break-all leading-relaxed bg-card/60 p-2.5 rounded-md border border-border/30">
+                    <div className="text-sm font-mono break-all leading-relaxed bg-card/60 p-2.5 rounded-md border border-border/30 max-h-40 overflow-auto custom-scrollbar [&_span]:!overflow-visible [&_span]:!whitespace-normal [&_span]:!text-clip [&_span]:inline">
                       {renderGuess(g)}
                     </div>
                   </div>

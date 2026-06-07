@@ -60,7 +60,7 @@ export function registerIpc(): void {
     const limit = Math.min(Math.max(req.limit ?? 20, 1), 200);
 
     const rows = await db.query(
-      `SELECT "${safeRowid}", "${safeCol}" FROM "${safeTable}" WHERE "${safeCol}" IS NOT NULL LIMIT ${limit}`,
+      `SELECT "${safeRowid}", "${safeCol}" FROM "${safeTable}" WHERE "${safeCol}" IS NOT NULL ORDER BY "${safeRowid}" DESC LIMIT ${limit}`,
     );
 
     const out: CellSample[] = [];
