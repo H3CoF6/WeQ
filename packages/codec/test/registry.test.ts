@@ -16,7 +16,13 @@ import { ProtoMsg } from '../src/core';
 import { decode, SchemaIndex, annotate } from '../src/raw';
 import { MsgBody } from '../src/proto/msg/common/body';
 import { ElementWire } from '../src/proto/msg/common/element';
-import { decodeElement, ElementType } from '../src/element';
+import {
+  decodeElement,
+  encodeElement,
+  ElementType,
+  FaceSubType,
+  type FaceElement,
+} from '../src/element';
 
 const SAMPLE = new Uint8Array([
   0x82, 0xf6, 0x13, 0x21, 0xc8, 0xfc, 0x15, 0xa1, 0xd0, 0xe6, 0xa4, 0xd2, 0xb8, 0xb8, 0x80, 0x6a,
@@ -164,3 +170,86 @@ describe('ProtoMsg auto-default injection', () => {
     expect(back.msgSyncFlag).toBeUndefined();
   });
 });
+
+describe('FaceElement (elementType=6)', () => {
+  it('round-trips a super-emoji dice', () => {
+    const original: FaceElement = {
+      kind: 'face',
+      elementId: 99n,
+      subType: FaceSubType.SUPER_EMOJI,
+      faceId: 358,
+      faceText: '骰子',
+      diceValue: '4',
+    };
+
+    const wire = encodeElement(original);
+    const bytes = new ProtoMsg(MsgBody).encode({ elements: [wire] });
+    const decoded = new ProtoMsg(MsgBody).decode(bytes);
+    const back = decodeElement(decoded.elements![0]!);
+
+    expect(back.kind).toBe('face');
+    if (back.kind === 'face') {
+      expect(back.elementId).toBe(99n);
+      expect(back.subType).toBe(FaceSubType.SUPER_EMOJI);
+      expect(back.faceId).toBe(358);
+      expect(back.faceText).toBe('骰子');
+      expect(back.diceValue).toBe('4');
+    }
+  });
+
+  it('drops diceValue when not provided (non-dice face)', () => {
+    const plain: FaceElement = {
+      kind: 'face',
+      elementId: 1n,
+      subType: FaceSubType.QQ_BUILTIN_NEW,
+      faceId: 1,
+      faceText: '微笑',
+    };
+    const wire = encodeElement(plain);
+    const bytes = new ProtoMsg(MsgBody).encode({ elements: [wire] });
+    const back = decodeElement(
+      new ProtoMsg(MsgBody).decode(bytes).elements![0]!,
+    );
+    expect(back.kind).toBe('face');
+    if (back.kind === 'face') expect(back.diceValue).toBeUndefined();
+  });
+
+  it('silently ignores unknown wire tags during decode', () => {
+    // Hand-craft an envelope containing an UNDECLARED tag 47604, sandwiched
+    // between declared fields. protobuf-ts should treat 47604 as an unknown
+    // field, not error out.
+    const codec = new ProtoMsg(ElementWire);
+    const knownBytes = codec.encode({
+      elementId: 5n,
+      elementType: ElementType.FACE,
+      subType: 2,
+      faceId: 1,
+      faceText: 'x',
+    });
+
+    // Append an undeclared field manually: tag 47604 (UINT32 varint = 99).
+    // (47604 << 3) | 0 = 380832 → varint encodes to bytes:
+    const tag47604Varint = encodeVarint(BigInt(47604 << 3) | 0n);
+    const valueVarint = encodeVarint(99n);
+    const merged = new Uint8Array([
+      ...knownBytes,
+      ...tag47604Varint,
+      ...valueVarint,
+    ]);
+
+    // Must not throw.
+    const back = codec.decode(merged);
+    expect(back.elementType).toBe(6);
+    expect(back.faceId).toBe(1);
+  });
+});
+
+function encodeVarint(v: bigint): number[] {
+  const out: number[] = [];
+  while (v >= 0x80n) {
+    out.push(Number((v & 0x7fn) | 0x80n));
+    v >>= 7n;
+  }
+  out.push(Number(v));
+  return out;
+}
