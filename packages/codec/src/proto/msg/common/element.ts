@@ -87,6 +87,22 @@ export const ElementWire = {
   /** 网址校验字段. Best guess: integer flag. */
   urlVerifyFlag: ProtoField(45112, ScalarType.UINT32, { optional: true }),
 
+  // ---- FACE (elementType=6) ----
+
+  /** Face id. Required for FACE elements. (`FaceIndex.DICE = 358`.) */
+  faceId: ProtoField(47601, ScalarType.UINT32, { optional: true }),
+
+  /** Face text description. Required for FACE elements. */
+  faceText: ProtoField(47602, ScalarType.STRING, { optional: true }),
+
+  /**
+   * Super-emoji dice roll, "1".."6" as string. Only present when subType=3
+   * AND faceId points at the dice face. 47603..47606 and 47608+ have been
+   * observed on the wire but never carried anything useful — deliberately
+   * NOT declared here so protobuf-ts skips them as unknown fields.
+   */
+  diceValue: ProtoField(47607, ScalarType.STRING, { optional: true }),
+
   // ---- Roaming / sync flags — category 2 envelope tags ----
 
   /** Roaming marker. Read for completeness; not part of any element. */
