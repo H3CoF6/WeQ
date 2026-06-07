@@ -6,6 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./raw": "./src/raw/index.ts",
+    "./element": "./src/element/index.ts",
+    "./domain": "./src/domain/index.ts",
     "./proto/*": "./src/proto/*.ts"
   },
   "scripts": {
@@ -15,8 +17,7 @@
   },
   "dependencies": {
     "@protobuf-ts/runtime": "^2.11.1",
-    "@weq/shared": "workspace:*",
-    "@weq/types": "workspace:*"
+    "@weq/shared": "workspace:*"
   },
   "devDependencies": {
     "vitest": "^2.1.8"

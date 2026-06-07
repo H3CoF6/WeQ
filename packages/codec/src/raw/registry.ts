@@ -21,7 +21,7 @@ import type { WireType } from './wire';
 export interface FieldInfo {
   /** Field number on the wire. */
   tag: number;
-  /** The name you gave the field in the schema object (camelCased already by NapProto). */
+  /** The name given in the schema object (camelCased already by the schema layer). */
   name: string;
   /** Scalar (e.g. STRING) or 'message' for nested. */
   kind: 'scalar' | 'message';
@@ -34,12 +34,8 @@ export interface FieldInfo {
   messageRef?: () => ProtoMessageType;
   optional: boolean;
   repeat: boolean;
-  /**
-   * Whether the field is part of the high-level Element model. Drives UI
-   * styling (matched-but-out-of-element renders differently from matched).
-   */
-  inElement: boolean;
-  /** Serialize-time fallback value when `inElement === false`. */
+  /** Serialize-time fallback value used when the upper layer didn't supply
+   *  one. Undefined for fields with no declared default. */
   default?: unknown;
 }
 
@@ -70,7 +66,6 @@ function fieldInfo(name: string, f: ProtoFieldType): FieldInfo {
       scalarType: f.type,
       optional: f.optional,
       repeat: f.repeat,
-      inElement: f.inElement,
       default: f.default,
     };
   }
@@ -81,7 +76,6 @@ function fieldInfo(name: string, f: ProtoFieldType): FieldInfo {
     messageRef: f.type,
     optional: f.optional,
     repeat: f.repeat,
-    inElement: f.inElement,
     default: f.default,
   };
 }

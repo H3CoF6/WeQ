@@ -7,5 +7,5 @@
 import { ProtoField, ScalarType } from '../../core';
 
 export const FriendInfoPbReserve = {
-  unknown_1: ProtoField(1, ScalarType.BYTES, { optional: true, inElement: false }),
+  unknown_1: ProtoField(1, ScalarType.BYTES, { optional: true }),
 };

@@ -1,1 +1,1 @@
-export * from './napproto';
+export * from './schema';

@@ -1,19 +1,14 @@
 /**
- * NapProto — schema-as-object protobuf DSL.
+ * Schema DSL — schema-as-object protobuf description.
  *
- * Originally adapted from NapCatQQ's `napcat-protobuf` package
- * (https://github.com/NapNeko/NapCatQQ/blob/main/packages/napcat-protobuf/NapProto.ts).
- * Divergences from upstream:
- *   - ProtoField uses an options object instead of positional optional/repeat
- *     args, and gains two element-mapping fields (`inElement`, `default`)
- *     used by `codec/{parse,serialize}.ts` to round-trip fields the
- *     high-level Element model doesn't care about.
- *   - The `R extends O extends true ? false : boolean` constraint upstream
- *     applies (incorrectly) was relaxed to plain `R extends boolean`, so
- *     `message + optional + repeat` (e.g. `elems`) type-checks naturally.
+ * Defines `ProtoField` and `ProtoMsg`: the runtime layer wraps
+ * `@protobuf-ts/runtime` so we can write protobuf shapes as plain object
+ * literals (`{ str: ProtoField(1, ScalarType.STRING) }`) without a .proto
+ * file or codegen step.
  *
- * `@protobuf-ts/runtime` still does the actual wire-format work; this DSL
- * is the thin schema-description layer.
+ * A field's `default` carries a fallback used by serialize when the upper
+ * layer didn't supply a value — useful for envelope flags that QQ expects
+ * on the wire but the high-level element model doesn't model.
  */
 
 // @ts-nocheck — heavy type-level recursion that exceeds TS's inference budget
@@ -24,6 +19,7 @@ import {
   type PartialMessage,
   RepeatType,
   ScalarType,
+  LongType,
 } from '@protobuf-ts/runtime';
 import type { PartialFieldInfo } from '@protobuf-ts/runtime/build/types/reflection-info';
 
@@ -72,26 +68,21 @@ export type ScalarTypeToTsType<T extends ScalarType> = T extends
           : never;
 
 /**
- * Options accepted by `ProtoField`. `TsType` is the value-shape this field
- * carries on the wire — used to constrain `default` so wrong-type literals
- * (e.g. `default: "hi"` on a UINT32 field) fail at compile time.
+ * Options accepted by `ProtoField`. `TsType` constrains `default` so a
+ * wrong-type literal (e.g. `default: "hi"` on a UINT32 field) fails at
+ * compile time.
  */
 export interface ProtoFieldOpts<TsType, O extends boolean = boolean, R extends boolean = boolean> {
-  /** protobuf3 `optional` modifier — encode struct may omit this field. */
+  /** protobuf3 `optional` modifier. */
   optional?: O;
-  /** protobuf `repeated` — wire may carry many; TS type becomes T[]. */
+  /** protobuf `repeated` — TS type becomes T[]. */
   repeat?: R;
   /**
-   * Whether this field appears in the high-level Element model.
-   * - `true` (default): element ↔ field 1:1.
-   * - `false`: parse drops it; serialize re-emits `default` (or protobuf3 zero).
-   *
-   * Use `false` for envelope flags / unknown_<tag> placeholders the renderer
-   * doesn't need to see but QQ expects on the wire.
+   * Fallback value supplied by serialize when the upper layer didn't carry
+   * this field. Used for envelope flags QQ expects on the wire but the
+   * element model doesn't expose. Only set this when QQ requires the field
+   * — leave undefined for truly optional fields that can be omitted.
    */
-  inElement?: boolean;
-  /** Fallback value supplied by `serialize.ts` when the element layer didn't
-   *  carry this field. Only meaningful with `inElement: false`. */
   default?: TsType;
 }
 
@@ -101,10 +92,8 @@ export interface BaseProtoFieldType<T, O extends boolean, R extends boolean> {
   type: T;
   optional: O;
   repeat: R;
-  /** Defaults to true (element carries it). */
-  inElement: boolean;
-  /** Serialize-time default when `inElement === false`. Untyped at storage; the
-   *  ProtoField overloads type-check it at construction. */
+  /** Serialize-time default. Untyped at storage; the ProtoField overloads
+   *  type-check it at construction. */
   default?: unknown;
 }
 
@@ -135,10 +124,8 @@ export type ProtoMessageType = {
  * @example
  *   // scalar
  *   text: ProtoField(123, ScalarType.STRING, { optional: true }),
- *   // unknown — element-layer doesn't carry it, write 1 on encode
- *   unknown_124: ProtoField(124, ScalarType.UINT32, {
- *     optional: true, inElement: false, default: 1,
- *   }),
+ *   // envelope flag — must always be present on the wire, default 1 on encode
+ *   flag: ProtoField(124, ScalarType.UINT32, { optional: true, default: 1 }),
  *   // nested message, repeated
  *   elems: ProtoField(2, () => Elem, { optional: true, repeat: true }),
  */
@@ -167,7 +154,6 @@ export function ProtoField(
 ): ProtoFieldType {
   const optional = (opts?.optional ?? false) as boolean;
   const repeat = (opts?.repeat ?? false) as boolean;
-  const inElement = opts?.inElement ?? true;
   const defaultValue = opts?.default;
 
   if (typeof type === 'function') {
@@ -177,7 +163,6 @@ export function ProtoField(
       type,
       optional,
       repeat,
-      inElement,
       default: defaultValue,
     } as ProtoFieldType;
   }
@@ -187,7 +172,6 @@ export function ProtoField(
     type,
     optional,
     repeat,
-    inElement,
     default: defaultValue,
   } as ProtoFieldType;
 }
@@ -196,7 +180,7 @@ export type ProtoFieldReturnType<T, E extends boolean> =
   NonNullable<T> extends ScalarProtoFieldType<infer S, infer _O, infer _R>
     ? ScalarTypeToTsType<S>
     : T extends NonNullable<MessageProtoFieldType<infer S, infer _O, infer _R>>
-      ? NonNullable<NapProtoStructType<ReturnType<S>, E>>
+      ? NonNullable<ProtoStructType<ReturnType<S>, E>>
       : never;
 
 export type RequiredFieldsBaseType<T, E extends boolean> = {
@@ -223,15 +207,25 @@ export type OptionalFieldsType<T, E extends boolean> = E extends true
   ? Partial<OptionalFieldsBaseType<T, E>>
   : OptionalFieldsBaseType<T, E>;
 
-export type NapProtoStructType<T, E extends boolean> = RequiredFieldsType<T, E> & OptionalFieldsType<T, E>;
+export type ProtoStructType<T, E extends boolean> = RequiredFieldsType<T, E> & OptionalFieldsType<T, E>;
 
-export type NapProtoEncodeStructType<T> = NapProtoStructType<T, true>;
-export type NapProtoDecodeStructType<T> = NapProtoStructType<T, false>;
+export type ProtoEncodeStructType<T> = ProtoStructType<T, true>;
+export type ProtoDecodeStructType<T> = ProtoStructType<T, false>;
 
-class NapProtoRealMsg<T extends ProtoMessageType> {
+function is64Bit(t: ScalarType): boolean {
+  return (
+    t === ScalarType.INT64 ||
+    t === ScalarType.UINT64 ||
+    t === ScalarType.FIXED64 ||
+    t === ScalarType.SFIXED64 ||
+    t === ScalarType.SINT64
+  );
+}
+
+class ProtoMsgCore<T extends ProtoMessageType> {
   private readonly _field: PartialFieldInfo[];
-  private readonly _proto_msg: MessageType<NapProtoStructType<T, boolean>>;
-  private static cache = new WeakMap<ProtoMessageType, NapProtoRealMsg<any>>();
+  private readonly _proto_msg: MessageType<ProtoStructType<T, boolean>>;
+  private static cache = new WeakMap<ProtoMessageType, ProtoMsgCore<any>>();
 
   private constructor(fields: T) {
     this._field = Object.keys(fields).map((key) => {
@@ -247,6 +241,7 @@ class NapProtoRealMsg<T extends ProtoMessageType> {
           name: key,
           kind: 'scalar',
           T: field.type,
+          L: is64Bit(field.type) ? LongType.BIGINT : undefined,
           opt: field.optional,
           repeat: repeatType,
         };
@@ -257,31 +252,31 @@ class NapProtoRealMsg<T extends ProtoMessageType> {
           name: key,
           kind: 'message',
           repeat: field.repeat ? RepeatType.PACKED : RepeatType.NO,
-          T: () => NapProtoRealMsg.getInstance(field.type())._proto_msg,
+          T: () => ProtoMsgCore.getInstance(field.type())._proto_msg,
         };
       }
       throw new Error(`Unknown field kind: ${(field as { kind: string }).kind}`);
     }) as PartialFieldInfo[];
-    this._proto_msg = new MessageType<NapProtoStructType<T, boolean>>('weq', this._field);
+    this._proto_msg = new MessageType<ProtoStructType<T, boolean>>('weq', this._field);
   }
 
-  static getInstance<T extends ProtoMessageType>(fields: T): NapProtoRealMsg<T> {
+  static getInstance<T extends ProtoMessageType>(fields: T): ProtoMsgCore<T> {
     let instance = this.cache.get(fields);
     if (!instance) {
-      instance = new NapProtoRealMsg(fields);
+      instance = new ProtoMsgCore(fields);
       this.cache.set(fields, instance);
     }
     return instance;
   }
 
-  encode(data: NapProtoEncodeStructType<T>): Uint8Array {
+  encode(data: ProtoEncodeStructType<T>): Uint8Array {
     return this._proto_msg.toBinary(
-      this._proto_msg.create(data as PartialMessage<NapProtoEncodeStructType<T>>),
+      this._proto_msg.create(data as PartialMessage<ProtoEncodeStructType<T>>),
     );
   }
 
-  decode(data: Uint8Array): NapProtoDecodeStructType<T> {
-    return this._proto_msg.fromBinary(data) as NapProtoDecodeStructType<T>;
+  decode(data: Uint8Array): ProtoDecodeStructType<T> {
+    return this._proto_msg.fromBinary(data) as ProtoDecodeStructType<T>;
   }
 }
 
@@ -290,22 +285,22 @@ class NapProtoRealMsg<T extends ProtoMessageType> {
  *
  * @example
  *   const Text = { str: ProtoField(1, ScalarType.STRING, { optional: true }) };
- *   const msg = new NapProtoMsg(Text);
+ *   const msg = new ProtoMsg(Text);
  *   const bytes = msg.encode({ str: 'hi' });
  *   const back = msg.decode(bytes);     // { str: 'hi' }
  */
-export class NapProtoMsg<T extends ProtoMessageType> {
-  private realMsg: NapProtoRealMsg<T>;
+export class ProtoMsg<T extends ProtoMessageType> {
+  private core: ProtoMsgCore<T>;
 
   constructor(fields: T) {
-    this.realMsg = NapProtoRealMsg.getInstance(fields);
+    this.core = ProtoMsgCore.getInstance(fields);
   }
 
-  encode(data: NapProtoEncodeStructType<T>): Uint8Array {
-    return this.realMsg.encode(data);
+  encode(data: ProtoEncodeStructType<T>): Uint8Array {
+    return this.core.encode(data);
   }
 
-  decode(data: Uint8Array): NapProtoDecodeStructType<T> {
-    return this.realMsg.decode(data);
+  decode(data: Uint8Array): ProtoDecodeStructType<T> {
+    return this.core.decode(data);
   }
 }
