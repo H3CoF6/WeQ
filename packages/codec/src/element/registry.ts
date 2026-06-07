@@ -20,6 +20,7 @@ import type {
 import { ElementWire } from '../proto/msg/common/element';
 import * as text from './text';
 import * as face from './face';
+import * as ark from './ark';
 import {
   ElementType,
   type Element,
@@ -38,11 +39,13 @@ interface ElementCodec<E extends Element> {
 const codecsByType: Partial<Record<ElementType, ElementCodec<Element>>> = {
   [ElementType.TEXT]: text as unknown as ElementCodec<Element>,
   [ElementType.FACE]: face as unknown as ElementCodec<Element>,
+  [ElementType.ARK]: ark as unknown as ElementCodec<Element>,
 };
 
 const codecsByKind: Record<string, ElementCodec<Element>> = {
   text: text as unknown as ElementCodec<Element>,
   face: face as unknown as ElementCodec<Element>,
+  ark: ark as unknown as ElementCodec<Element>,
 };
 
 export function decodeElement(wire: ProtoDecodeStructType<typeof ElementWire>): Element {

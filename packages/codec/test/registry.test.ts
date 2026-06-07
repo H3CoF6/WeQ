@@ -21,8 +21,11 @@ import {
   encodeElement,
   ElementType,
   FaceSubType,
+  type ArkElement,
+  type ArkPayload,
   type FaceElement,
 } from '../src/element';
+import { SAMPLE_GAME_CENTER_AD } from '../src/element/ark';
 
 const SAMPLE = new Uint8Array([
   0x82, 0xf6, 0x13, 0x21, 0xc8, 0xfc, 0x15, 0xa1, 0xd0, 0xe6, 0xa4, 0xd2, 0xb8, 0xb8, 0x80, 0x6a,
@@ -264,6 +267,53 @@ describe('FaceElement (elementType=6)', () => {
     const back = codec.decode(merged);
     expect(back.elementType).toBe(6);
     expect(back.faceId).toBe(1);
+  });
+});
+
+describe('ArkElement (elementType=10)', () => {
+  it('round-trips a game-center ad ark card via JSON string', () => {
+    const json = JSON.stringify(SAMPLE_GAME_CENTER_AD);
+    const original: ArkElement = {
+      kind: 'ark',
+      elementId: 42n,
+      arkData: json,
+    };
+
+    const wire = encodeElement(original);
+    const bytes = new ProtoMsg(MsgBody).encode({ elements: [wire] });
+    const back = decodeElement(
+      new ProtoMsg(MsgBody).decode(bytes).elements![0]!,
+    );
+
+    expect(back.kind).toBe('ark');
+    if (back.kind === 'ark') {
+      // Byte-exact JSON survives the wire layer (no key reorder).
+      expect(back.arkData).toBe(json);
+      // And the parsed shape matches the typed sample.
+      const parsed = JSON.parse(back.arkData) as ArkPayload;
+      expect(parsed.app).toBe('com.tencent.gamecenter.mall');
+      expect(parsed.view).toBe('pubAdArkView');
+      expect(parsed.meta.template3!.actId).toBe(3062270);
+      expect(parsed.config?.token).toBe(SAMPLE_GAME_CENTER_AD.config?.token);
+    }
+  });
+
+  it('does NOT leak TEXT defaults into ARK bytes', () => {
+    const wire = encodeElement({
+      kind: 'ark',
+      elementId: 1n,
+      arkData: '{}',
+    });
+    expect(wire.textReserve).toBeUndefined();
+
+    const bytes = new ProtoMsg(MsgBody).encode({ elements: [wire] });
+    const tree = decode(bytes);
+    const inner = tree[0]!.guesses.find((g) => g.kind === 'len-nested');
+    if (inner?.kind === 'len-nested') {
+      const tags = new Set(inner.value.map((f) => f.tag));
+      expect(tags.has(45102)).toBe(false);
+      expect(tags.has(47901)).toBe(true);
+    }
   });
 });
 

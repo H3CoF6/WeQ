@@ -30,6 +30,7 @@ export type ElementWireField = keyof typeof ElementWire;
 export enum ElementType {
   TEXT = 1,
   FACE = 6,
+  ARK = 10,
 }
 
 /**
@@ -67,6 +68,48 @@ export interface FaceElement extends BaseElementFields {
 }
 
 /**
+ * Shape of the JSON document stored in wire field 47901 for ARK elements.
+ * `meta`'s inner shape varies per `view` (`pubAdArkView`, `news`, …) — the
+ * concrete examples that have been documented live as exported sample
+ * constants in `element/ark.ts`.
+ */
+export interface ArkPayload {
+  /** App identifier, e.g. "com.tencent.gamecenter.mall". */
+  app: string;
+  /** Short description shown in AIO list / notification. */
+  desc: string;
+  /** View-specific data, keyed by template name (`template3`, `news`, …). */
+  meta: Record<string, Record<string, unknown>>;
+  /** Plain-text fallback used when the card can't render. */
+  prompt: string;
+  /** Source identifier (often the appid for ads). */
+  sourceName?: string;
+  /** Ark template version, e.g. "0.0.3.67". */
+  ver?: string;
+  /** Renderer name, e.g. "pubAdArkView". Determines which `meta.<name>` is read. */
+  view: string;
+  /** Card verification token + creation timestamp. */
+  config?: ArkConfig;
+}
+
+export interface ArkConfig {
+  /** Unix seconds. */
+  ctime: number;
+  /** Card signature token. */
+  token: string;
+}
+
+export interface ArkElement extends BaseElementFields {
+  kind: 'ark';
+  /**
+   * Raw JSON string from wire field 47901. Parse with `JSON.parse()` and
+   * narrow against `ArkPayload`. The codec deliberately keeps this as
+   * string so re-serialize is byte-exact (no JSON key-reorder).
+   */
+  arkData: string;
+}
+
+/**
  * Fallback for elementType values that aren't yet registered in the codec.
  * Carries the full wire envelope so encodeElement can put it back on disk
  * exactly as it came in.
@@ -77,4 +120,4 @@ export interface UnknownElement extends BaseElementFields {
   raw: ProtoEncodeStructType<typeof ElementWire>;
 }
 
-export type Element = TextElement | FaceElement | UnknownElement;
+export type Element = TextElement | FaceElement | ArkElement | UnknownElement;
