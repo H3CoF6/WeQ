@@ -103,6 +103,15 @@ export const ElementWire = {
    */
   diceValue: ProtoField(47607, ScalarType.STRING, { optional: true }),
 
+  // ---- ARK (elementType=10) ----
+
+  /**
+   * Ark card / mini-program JSON payload. UTF-8 string holding a JSON
+   * document. Shape varies per `view` field of the JSON — see ArkPayload
+   * and `SAMPLE_GAME_CENTER_AD` in `element/ark.ts` for a worked example.
+   */
+  arkData: ProtoField(47901, ScalarType.STRING, { optional: true }),
+
   // ---- Roaming / sync flags — category 2 envelope tags ----
 
   /** Roaming marker. Read for completeness; not part of any element. */
