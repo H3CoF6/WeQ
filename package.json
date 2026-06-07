@@ -1,0 +1,22 @@
+{
+  "name": "weq",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "QQ NT 本地聊天记录解密、导出、查看与年度报告",
+  "license": "GPL-3.0-or-later",
+  "packageManager": "pnpm@10.33.2",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @weq/desktop dev",
+    "build": "pnpm --filter @weq/desktop build",
+    "proto": "pnpm --filter @weq/protolab dev",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}
