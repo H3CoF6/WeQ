@@ -13,7 +13,6 @@ import {
   Type,
   Binary,
   Braces,
-  EyeOff,
   X,
   Copy,
   Terminal,
@@ -40,19 +39,11 @@ function TreeNode({ node, depth }: { node: AnnotatedField; depth: number }) {
 
   const badge = (() => {
     if (node.match.kind === 'matched') {
-      if (node.match.info.inElement) {
-        return {
-          label: node.match.info.name,
-          color: 'text-primary',
-          bg: 'bg-primary/8',
-          icon: CheckCircle2,
-        };
-      }
       return {
         label: node.match.info.name,
-        color: 'text-muted/60',
-        bg: 'bg-muted/8',
-        icon: EyeOff,
+        color: 'text-primary',
+        bg: 'bg-primary/8',
+        icon: CheckCircle2,
       };
     }
     if (node.match.kind === 'type-mismatch') {
@@ -72,7 +63,7 @@ function TreeNode({ node, depth }: { node: AnnotatedField; depth: number }) {
   })();
 
   const defaultHint =
-    node.match.kind === 'matched' && !node.match.info.inElement && node.match.info.default !== undefined
+    node.match.kind === 'matched' && node.match.info.default !== undefined
       ? formatDefault(node.match.info.default)
       : null;
 
@@ -181,7 +172,7 @@ function TreeNode({ node, depth }: { node: AnnotatedField; depth: number }) {
           className="flex items-start gap-2 text-muted text-[10px] py-1 ml-4 border-l-2 border-muted/15"
           style={{ marginLeft: `${depth * 16 + 32}px`, paddingLeft: '8px' }}
         >
-          <EyeOff className="w-3 h-3 mt-0.5 shrink-0 opacity-30" />
+          <Binary className="w-3 h-3 mt-0.5 shrink-0 opacity-30" />
           <span className="opacity-50">
             default: <code className="font-mono">{defaultHint}</code>
           </span>

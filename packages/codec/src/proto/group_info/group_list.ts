@@ -12,11 +12,11 @@ import { ProtoField, ScalarType } from '../../core';
 
 /** group_list.column_33 — 36-byte BLOB seen on every row. */
 export const GroupListPb33 = {
-  unknown_1: ProtoField(1, ScalarType.UINT64, { optional: true, inElement: false }),
-  unknown_2: ProtoField(2, ScalarType.UINT32, { optional: true, inElement: false }),
+  unknown_1: ProtoField(1, ScalarType.UINT64, { optional: true }),
+  unknown_2: ProtoField(2, ScalarType.UINT32, { optional: true }),
 };
 
 /** group_list.column_41 — 150-byte BLOB seen on every row. */
 export const GroupListPb41 = {
-  unknown_1: ProtoField(1, ScalarType.STRING, { optional: true, inElement: false }),
+  unknown_1: ProtoField(1, ScalarType.STRING, { optional: true }),
 };
