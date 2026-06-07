@@ -1,22 +1,38 @@
 /**
  * Element codec dispatch table.
  *
- * Decode path: read elementType (45002) off the wire, look it up here, and
- * delegate to that codec's `fromWire`. Unknown elementType → UnknownElement
- * wrapping the raw envelope (so re-serialize can put it back byte-for-byte).
+ * Decode: look up `wire.elementType` (tag 45002) here and delegate to that
+ * codec's `fromWire`. Unknown elementType → UnknownElement wrapping the
+ * raw envelope (re-serialize puts it back byte-for-byte).
  *
- * Encode path: switch on `el.kind` and delegate to the matching `toWire`.
+ * Encode: switch on `el.kind` and delegate to the matching `toWire`, then
+ * fill in any category-1 envelope flags the codec listed in
+ * `necessaryFields` — pulling their values from the schema's declared
+ * `default`. This keeps text-only fields like 45102 from leaking into
+ * face/pic/file wire bytes.
  */
 
-import type { ProtoDecodeStructType, ProtoEncodeStructType } from '../core';
+import type {
+  ProtoDecodeStructType,
+  ProtoEncodeStructType,
+  ProtoMessageType,
+} from '../core';
 import { ElementWire } from '../proto/msg/common/element';
 import * as text from './text';
 import * as face from './face';
-import { ElementType, type Element, type UnknownElement } from './types';
+import {
+  ElementType,
+  type Element,
+  type ElementWireField,
+  type UnknownElement,
+} from './types';
 
 interface ElementCodec<E extends Element> {
   fromWire(wire: ProtoDecodeStructType<typeof ElementWire>): E;
   toWire(el: E): ProtoEncodeStructType<typeof ElementWire>;
+  /** Wire fields whose schema-declared default this codec wants auto-filled
+   *  when the caller's `toWire` didn't supply a value. */
+  necessaryFields: readonly ElementWireField[];
 }
 
 const codecsByType: Partial<Record<ElementType, ElementCodec<Element>>> = {
@@ -42,7 +58,28 @@ export function encodeElement(el: Element): ProtoEncodeStructType<typeof Element
   if (!codec) {
     throw new Error(`No encoder registered for element kind: ${el.kind}`);
   }
-  return codec.toWire(el);
+  const wire = codec.toWire(el);
+  return fillNecessaryDefaults(wire, ElementWire, codec.necessaryFields);
+}
+
+/**
+ * For each name in `necessary`, if `wire[name]` is undefined and the schema
+ * declares a `default` for that field, copy the default in.
+ *
+ * Returns a shallow-copied object — caller's input is not mutated.
+ */
+function fillNecessaryDefaults<W>(
+  wire: W,
+  schema: ProtoMessageType,
+  necessary: readonly string[],
+): W {
+  const out = { ...wire } as Record<string, unknown>;
+  for (const name of necessary) {
+    if (out[name] !== undefined) continue;
+    const field = schema[name];
+    if (field?.default !== undefined) out[name] = field.default;
+  }
+  return out as W;
 }
 
 function makeUnknown(

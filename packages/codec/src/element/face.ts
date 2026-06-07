@@ -12,7 +12,10 @@
 
 import type { ProtoDecodeStructType, ProtoEncodeStructType } from '../core';
 import { ElementWire } from '../proto/msg/common/element';
-import { ElementType, type FaceElement } from './types';
+import { ElementType, type ElementWireField, type FaceElement } from './types';
+
+/** FACE rows carry no category-1 envelope flags (so far). */
+export const necessaryFields: readonly ElementWireField[] = [];
 
 export function fromWire(wire: ProtoDecodeStructType<typeof ElementWire>): FaceElement {
   return {

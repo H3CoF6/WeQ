@@ -16,7 +16,18 @@
 
 import type { ProtoDecodeStructType, ProtoEncodeStructType } from '../core';
 import { ElementWire } from '../proto/msg/common/element';
-import { ElementType, type TextElement } from './types';
+import { ElementType, type ElementWireField, type TextElement } from './types';
+
+/**
+ * Wire fields that QQ requires on every TEXT element row but the element
+ * model doesn't expose. `encodeElement` reads each name from the schema's
+ * declared `default` and injects it when this codec's `toWire` didn't.
+ *
+ * This is how we keep category-1 fields type-scoped: ElementWire is flat
+ * and shared across element types, but only TEXT pulls 45102's default —
+ * encoding a FACE never touches `textReserve`.
+ */
+export const necessaryFields: readonly ElementWireField[] = ['textReserve'];
 
 export function fromWire(wire: ProtoDecodeStructType<typeof ElementWire>): TextElement {
   return {
@@ -35,6 +46,6 @@ export function toWire(el: TextElement): ProtoEncodeStructType<typeof ElementWir
     isSender: el.isSender,
     subType: el.subType,
     textContent: el.content,
-    // textReserve (45102) auto-injected by ProtoMsg.encode via schema default.
+    // textReserve (45102) auto-filled by encodeElement via `necessaryFields`.
   };
 }

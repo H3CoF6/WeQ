@@ -223,13 +223,11 @@ function is64Bit(t: ScalarType): boolean {
 }
 
 class ProtoMsgCore<T extends ProtoMessageType> {
-  private readonly _fields: T;
   private readonly _field: PartialFieldInfo[];
   private readonly _proto_msg: MessageType<ProtoStructType<T, boolean>>;
   private static cache = new WeakMap<ProtoMessageType, ProtoMsgCore<any>>();
 
   private constructor(fields: T) {
-    this._fields = fields;
     this._field = Object.keys(fields).map((key) => {
       const field = fields[key];
       if (field.kind === 'scalar') {
@@ -271,49 +269,21 @@ class ProtoMsgCore<T extends ProtoMessageType> {
     return instance;
   }
 
+  /**
+   * Pure wire serializer — emits exactly what the caller provided. ProtoField
+   * `default` values are NOT auto-injected here; the upper layer (e.g. the
+   * element codec via `necessaryFields`) is responsible for deciding which
+   * defaults are in scope for which call.
+   */
   encode(data: ProtoEncodeStructType<T>): Uint8Array {
-    const enriched = applyDefaults(data, this._fields) as ProtoEncodeStructType<T>;
     return this._proto_msg.toBinary(
-      this._proto_msg.create(enriched as PartialMessage<ProtoEncodeStructType<T>>),
+      this._proto_msg.create(data as PartialMessage<ProtoEncodeStructType<T>>),
     );
   }
 
   decode(data: Uint8Array): ProtoDecodeStructType<T> {
     return this._proto_msg.fromBinary(data) as ProtoDecodeStructType<T>;
   }
-}
-
-/**
- * Fill in any scalar field whose value is `undefined` but whose ProtoField
- * declared a `default`. Recurses into nested messages (single and repeated)
- * so a default declared deep in a sub-schema still kicks in when the caller
- * supplied a parent object but not that specific field.
- *
- * Pure: returns a shallow-copied object — callers' input is not mutated.
- */
-function applyDefaults(data: unknown, schema: ProtoMessageType): unknown {
-  if (data === null || data === undefined || typeof data !== 'object') return data;
-  const src = data as Record<string, unknown>;
-  const out: Record<string, unknown> = { ...src };
-  for (const [key, field] of Object.entries(schema)) {
-    if (field.kind === 'scalar') {
-      if (out[key] === undefined && field.default !== undefined) {
-        out[key] = field.default;
-      }
-      continue;
-    }
-    // message field
-    const nested = field.type();
-    const value = out[key];
-    if (field.repeat) {
-      if (Array.isArray(value)) {
-        out[key] = value.map((item) => applyDefaults(item, nested));
-      }
-    } else if (value !== undefined && value !== null) {
-      out[key] = applyDefaults(value, nested);
-    }
-  }
-  return out;
 }
 
 /**

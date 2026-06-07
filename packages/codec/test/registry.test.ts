@@ -112,32 +112,41 @@ describe('typed decode via ProtoMsg + decodeElement', () => {
   });
 });
 
-describe('ProtoMsg auto-default injection', () => {
-  it('emits 45102 = 0 even when caller omits textReserve', () => {
-    const codec = new ProtoMsg(ElementWire);
-    const bytes = codec.encode({
+describe('encodeElement category-1 default injection', () => {
+  it('fills textReserve=0 on TEXT via necessaryFields', () => {
+    const wire = encodeElement({
+      kind: 'text',
       elementId: 1n,
-      elementType: ElementType.TEXT,
-      textContent: 'hi',
-      // textReserve intentionally omitted
+      content: 'hi',
     });
-    // Decode the bytes back via raw to inspect what was actually emitted.
-    const raw = decode(bytes);
-    const byTag = new Map(raw.map((f) => [f.tag, f]));
-    expect(byTag.has(45102)).toBe(true);
-    const g = byTag.get(45102)!.guesses.find((x) => x.kind === 'varint-uint64');
-    expect(g?.kind).toBe('varint-uint64');
-    if (g?.kind === 'varint-uint64') expect(g.value).toBe(0n);
+    expect(wire.textReserve).toBe(0);
   });
 
-  it('propagates defaults through nested repeated messages (MsgBody → ElementWire)', () => {
-    const bytes = new ProtoMsg(MsgBody).encode({
-      elements: [
-        { elementId: 1n, elementType: ElementType.TEXT, textContent: 'x' },
-      ],
-    });
+  it('TEXT bytes through MsgBody contain 45102 = 0', () => {
+    const wire = encodeElement({ kind: 'text', elementId: 1n, content: 'hi' });
+    const bytes = new ProtoMsg(MsgBody).encode({ elements: [wire] });
     const back = new ProtoMsg(MsgBody).decode(bytes);
     expect(back.elements![0]!.textReserve).toBe(0);
+  });
+
+  it('does NOT leak TEXT defaults into FACE bytes', () => {
+    const wire = encodeElement({
+      kind: 'face',
+      elementId: 1n,
+      faceId: 1,
+      faceText: 'x',
+    });
+    expect(wire.textReserve).toBeUndefined();
+
+    // Verify at the byte level: FACE bytes must not contain tag 45102.
+    const bytes = new ProtoMsg(MsgBody).encode({ elements: [wire] });
+    const tree = decode(bytes);
+    const inner = tree[0]!.guesses.find((g) => g.kind === 'len-nested');
+    expect(inner?.kind).toBe('len-nested');
+    if (inner?.kind === 'len-nested') {
+      const tags = new Set(inner.value.map((f) => f.tag));
+      expect(tags.has(45102)).toBe(false);
+    }
   });
 
   it('does not emit category-2 fields without explicit caller values', () => {
@@ -149,11 +158,25 @@ describe('ProtoMsg auto-default injection', () => {
     });
     const raw = decode(bytes);
     const tags = new Set(raw.map((f) => f.tag));
-    // No default declared on 45103..45112 or 49154/5 → must not appear.
     expect(tags.has(45103)).toBe(false);
     expect(tags.has(45110)).toBe(false);
     expect(tags.has(49154)).toBe(false);
     expect(tags.has(49155)).toBe(false);
+  });
+
+  it('ProtoMsg.encode itself does NOT auto-inject defaults', () => {
+    // Pure wire serializer — only emits what the caller supplied. Defaults
+    // are an element-layer concern, not a wire-layer concern.
+    const codec = new ProtoMsg(ElementWire);
+    const bytes = codec.encode({
+      elementId: 1n,
+      elementType: ElementType.TEXT,
+      textContent: 'hi',
+      // textReserve omitted — must NOT appear in bytes at this level
+    });
+    const raw = decode(bytes);
+    const tags = new Set(raw.map((f) => f.tag));
+    expect(tags.has(45102)).toBe(false);
   });
 
   it('omits truly optional fields with no default on round-trip', () => {

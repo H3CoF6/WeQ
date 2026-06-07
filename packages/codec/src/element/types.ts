@@ -17,6 +17,13 @@ import type { ProtoEncodeStructType } from '../core';
 import type { ElementWire } from '../proto/msg/common/element';
 
 /**
+ * The set of field names declared on the wire envelope. Used to constrain
+ * each element codec's `necessaryFields` so a typo in the codec doesn't
+ * silently no-op at runtime.
+ */
+export type ElementWireField = keyof typeof ElementWire;
+
+/**
  * Numeric element types as encoded in tag 45002. Independent of the
  * (vendored, reference-only) enum in `@weq/types`.
  */
