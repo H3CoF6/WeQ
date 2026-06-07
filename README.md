@@ -59,8 +59,6 @@
 
 [NapNeko 团队](https://github.com/NapNeko) : 大量实现参考
 
-[SnowLuma 团队](https://github.com/SnowLuma): 部分实现参考
-
 [LiteLoader](https://github.com/LiteLoaderQQNT/LiteLoaderQQNT) : QQ内部页面实现参考
 
 [WeFlow](https://github.com/hicccc77/WeFlow) ： 优秀的聊天记录导出软件
