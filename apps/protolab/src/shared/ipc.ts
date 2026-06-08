@@ -38,6 +38,8 @@ export interface SampleReq {
   column: string;
   rowidColumn?: string; // default: "40050" (QQ NT msg tables) or "rowid"
   limit?: number; // default: 20
+  offset?: number; // default: 0
+  order?: 'ASC' | 'DESC'; // default: 'DESC'
 }
 
 export const IPC_CHANNELS = {

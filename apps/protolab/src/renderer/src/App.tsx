@@ -17,8 +17,14 @@ import {
   Sun,
   Moon,
   Monitor,
-  RefreshCw
+  RefreshCw,
+  Terminal,
+  X,
+  Copy,
+  Binary,
+  ArrowUpDown
 } from 'lucide-react';
+import * as Dialog from '@radix-ui/react-dialog';
 import { cn } from './lib/utils';
 
 const { decode, SchemaIndex, annotate } = codecRaw;
@@ -60,6 +66,9 @@ export default function App() {
   const [samples, setSamples] = useState<CellSample[]>([]);
   const [selected, setSelected] = useState<CellSample | null>(null);
   const [schemaName, setSchemaName] = useState<string>('');
+  const [showRawHex, setShowRawHex] = useState(false);
+  const [sampleOrder, setSampleOrder] = useState<'ASC' | 'DESC'>('DESC');
+  const [hasMoreSamples, setHasMoreSamples] = useState(true);
 
   const [filter, setFilter] = useState('');
 
@@ -102,18 +111,39 @@ export default function App() {
   useEffect(() => {
     if (!opened || !table || !column) return;
     setSelected(null);
+    setSamples([]);
+    setHasMoreSamples(true);
     window.protolab
-      .sampleColumn({ dbPath, key, table, column, limit: 50 })
-      .then(setSamples)
+      .sampleColumn({ dbPath, key, table, column, limit: 50, offset: 0, order: sampleOrder })
+      .then((data) => {
+        setSamples(data);
+        setHasMoreSamples(data.length === 50);
+      })
       .catch((e: unknown) => setErr(String(e)));
-  }, [opened, table, column, dbPath, key]);
+  }, [opened, table, column, dbPath, key, sampleOrder]);
 
   function refreshSamples() {
     if (!opened || !table || !column) return;
     setSelected(null);
+    setSamples([]);
+    setHasMoreSamples(true);
     window.protolab
-      .sampleColumn({ dbPath, key, table, column, limit: 50 })
-      .then(setSamples)
+      .sampleColumn({ dbPath, key, table, column, limit: 50, offset: 0, order: sampleOrder })
+      .then((data) => {
+        setSamples(data);
+        setHasMoreSamples(data.length === 50);
+      })
+      .catch((e: unknown) => setErr(String(e)));
+  }
+
+  function loadMoreSamples() {
+    if (!opened || !table || !column || !hasMoreSamples) return;
+    window.protolab
+      .sampleColumn({ dbPath, key, table, column, limit: 50, offset: samples.length, order: sampleOrder })
+      .then((data) => {
+        setSamples((prev) => [...prev, ...data]);
+        setHasMoreSamples(data.length === 50);
+      })
       .catch((e: unknown) => setErr(String(e)));
   }
 
@@ -280,16 +310,34 @@ export default function App() {
                 <span className="text-[10px] font-medium uppercase tracking-wider text-muted flex items-center gap-1.5">
                   <FileCode className="w-3 h-3" /> Samples
                 </span>
-                <button
-                  onClick={refreshSamples}
-                  className="p-1 rounded hover:bg-accent text-muted hover:text-primary transition-colors disabled:opacity-30"
-                  disabled={!column}
-                  title="Refresh"
-                >
-                  <RefreshCw className="w-3 h-3" />
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setSampleOrder(order => order === 'ASC' ? 'DESC' : 'ASC')}
+                    className="p-1 rounded hover:bg-accent text-muted hover:text-primary transition-colors disabled:opacity-30"
+                    disabled={!column}
+                    title={`Order: ${sampleOrder} (click to toggle)`}
+                  >
+                    <ArrowUpDown className="w-3 h-3" />
+                  </button>
+                  <button
+                    onClick={refreshSamples}
+                    className="p-1 rounded hover:bg-accent text-muted hover:text-primary transition-colors disabled:opacity-30"
+                    disabled={!column}
+                    title="Refresh"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                  </button>
+                </div>
               </div>
-              <div className="flex-1 overflow-y-auto space-y-px custom-scrollbar px-2 pb-2">
+              <div
+                className="flex-1 overflow-y-auto space-y-px custom-scrollbar px-2 pb-2"
+                onScroll={(e) => {
+                  const target = e.currentTarget;
+                  if (target.scrollHeight - target.scrollTop - target.clientHeight < 50 && hasMoreSamples) {
+                    loadMoreSamples();
+                  }
+                }}
+              >
                 {!column && <div className="h-full flex items-center justify-center"><p className="text-xs text-muted/40 italic">Select a column</p></div>}
                 {samples.map((s) => (
                   <button
@@ -359,7 +407,13 @@ export default function App() {
                       <span className="text-xs text-muted/40">|</span>
                       <span className="text-xs text-muted font-mono">{selected.byteLength}B</span>
                     </div>
-                    <code className="text-xs font-mono text-muted">offset 0x0000</code>
+                    <button
+                      onClick={() => setShowRawHex(true)}
+                      className="px-3 py-1.5 rounded-md bg-muted/10 hover:bg-primary/10 text-muted hover:text-primary border border-border hover:border-primary/30 transition-all text-xs font-medium flex items-center gap-1.5"
+                    >
+                      <FileCode className="w-3 h-3" />
+                      View Raw
+                    </button>
                   </div>
 
                   {/* Tree panel */}
@@ -391,6 +445,69 @@ export default function App() {
           </div>
         </main>
       </div>
+      {selected && (
+        <RawHexModal
+          open={showRawHex}
+          onOpenChange={setShowRawHex}
+          sample={selected}
+          tableName={table}
+          columnName={column}
+        />
+      )}
     </div>
+  );
+}
+
+function RawHexModal({ open, onOpenChange, sample, tableName, columnName }: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  sample: CellSample;
+  tableName: string;
+  columnName: string;
+}) {
+  const bytes = useMemo(() => hexToBytes(sample.bytesHex), [sample.bytesHex]);
+
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 bg-background/70 backdrop-blur-sm z-[100] animate-in fade-in duration-200" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-3xl max-h-[85vh] bg-card border border-border rounded-xl shadow-xl z-[101] flex flex-col overflow-hidden animate-in fade-in zoom-in-[0.98] duration-200">
+          <div className="px-5 py-4 border-b border-border flex items-center justify-between shrink-0">
+            <div className="flex items-center gap-3">
+              <Terminal className="w-4 h-4 text-primary" />
+              <div>
+                <Dialog.Title className="text-sm font-semibold">Raw Hexdump</Dialog.Title>
+                <Dialog.Description className="text-[11px] text-muted mt-0.5 font-mono">
+                  {tableName}.{columnName} · Row #{sample.rowid} · {sample.byteLength}B
+                </Dialog.Description>
+              </div>
+            </div>
+            <Dialog.Close className="p-1.5 rounded-md hover:bg-accent transition-colors">
+              <X className="w-4 h-4 text-muted" />
+            </Dialog.Close>
+          </div>
+          <div className="flex-1 p-4 overflow-hidden">
+            <div className="h-full bg-accent rounded-lg border border-border p-4 overflow-y-auto custom-scrollbar">
+              <div className="font-mono text-xs leading-6 space-y-px">
+                {Array.from({ length: Math.ceil(bytes.length / 16) }).map((_, rowIndex) => (
+                  <div key={rowIndex} className="flex gap-4 group/row">
+                    <span className="text-muted/25 shrink-0 w-12">{(rowIndex * 16).toString(16).padStart(8, '0')}</span>
+                    <span className="text-primary/70 group-hover/row:text-primary transition-colors flex-1">
+                      {Array.from(bytes.slice(rowIndex * 16, rowIndex * 16 + 16)).map(b => b.toString(16).padStart(2, '0')).join(' ')}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <button
+              onClick={() => navigator.clipboard.writeText(sample.bytesHex)}
+              className="mt-3 w-full bg-primary hover:bg-primary/90 text-white py-2 rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 active:scale-[0.98]"
+            >
+              <Copy className="w-3 h-3" /> Copy hex
+            </button>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }

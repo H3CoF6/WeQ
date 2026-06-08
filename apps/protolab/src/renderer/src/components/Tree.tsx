@@ -42,8 +42,9 @@ function TreeNode({ node, depth, hasSchema }: { node: AnnotatedField; depth: num
   const [open, setOpen] = useState(true);
   const [guessIdx, setGuessIdx] = useState(0);
   const [showDetail, setShowDetail] = useState(false);
-  const hasChildren = !!node.children?.length;
+  const [showRaw, setShowRaw] = useState(false);
   const guess = node.raw.guesses[guessIdx] ?? node.raw.guesses[0];
+  const hasChildren = guess?.kind === 'len-nested' && !!node.children?.length;
 
   const badge = (() => {
     if (node.match.kind === 'matched') {
@@ -178,6 +179,17 @@ function TreeNode({ node, depth, hasSchema }: { node: AnnotatedField; depth: num
         </div>
 
         <div className="shrink-0 flex items-center gap-2 text-[10px] text-muted/25 opacity-0 group-hover/node:opacity-100 transition-opacity">
+          <button
+            type="button"
+            className="px-1.5 py-0.5 rounded bg-muted/10 hover:bg-primary/10 text-muted hover:text-primary transition-colors font-medium"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowRaw(true);
+            }}
+            title="View raw hexdump"
+          >
+            raw
+          </button>
           <span className="font-mono">@{node.raw.start.toString().padStart(4, '0')}</span>
           <span>{node.raw.size}B</span>
         </div>
@@ -224,6 +236,11 @@ function TreeNode({ node, depth, hasSchema }: { node: AnnotatedField; depth: num
       <DetailModal
         open={showDetail}
         onOpenChange={setShowDetail}
+        node={node}
+      />
+      <RawModal
+        open={showRaw}
+        onOpenChange={setShowRaw}
         node={node}
       />
     </div>
@@ -328,6 +345,70 @@ function DetailModal({ open, onOpenChange, node }: { open: boolean, onOpenChange
             </div>
           </div>
 
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+function RawModal({ open, onOpenChange, node }: { open: boolean, onOpenChange: (o: boolean) => void, node: AnnotatedField }) {
+  const bytes = useMemo(() => {
+    const guess = node.raw.guesses.find(g => g.kind === 'len-bytes' || g.kind === 'len-utf8');
+    if (guess?.kind === 'len-bytes') return guess.value;
+    if (guess?.kind === 'len-utf8') return new TextEncoder().encode(guess.value);
+    return new Uint8Array(0);
+  }, [node]);
+
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 bg-background/70 backdrop-blur-sm z-[100] animate-in fade-in duration-200" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-2xl max-h-[85vh] bg-card border border-border rounded-xl shadow-xl z-[101] flex flex-col overflow-hidden animate-in fade-in zoom-in-[0.98] duration-200">
+          <div className="px-5 py-4 border-b border-border flex items-center justify-between shrink-0">
+            <div className="flex items-center gap-3">
+              <Terminal className="w-4 h-4 text-primary" />
+              <div>
+                <Dialog.Title className="text-sm font-semibold flex items-center gap-2">
+                  Raw Hexdump <span className="text-primary">#{node.raw.tag}</span>
+                </Dialog.Title>
+                <Dialog.Description className="text-[11px] text-muted mt-0.5 font-mono">
+                  {node.raw.size}B at offset {node.raw.start}
+                </Dialog.Description>
+              </div>
+            </div>
+            <Dialog.Close className="p-1.5 rounded-md hover:bg-accent transition-colors">
+              <X className="w-4 h-4 text-muted" />
+            </Dialog.Close>
+          </div>
+          <div className="flex-1 p-4 overflow-hidden">
+            <div className="h-full bg-accent rounded-lg border border-border p-3 overflow-y-auto custom-scrollbar">
+              {bytes.length > 0 ? (
+                <div className="font-mono text-xs leading-6 space-y-px">
+                  {Array.from({ length: Math.ceil(bytes.length / 8) }).map((_, rowIndex) => (
+                    <div key={rowIndex} className="flex gap-3 group/row">
+                      <span className="text-muted/25 shrink-0">{(rowIndex * 8).toString(16).padStart(4, '0')}</span>
+                      <span className="text-primary/70 group-hover/row:text-primary transition-colors">
+                        {Array.from(bytes.slice(rowIndex * 8, rowIndex * 8 + 8)).map(b => b.toString(16).padStart(2, '0')).join(' ')}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center text-center opacity-25">
+                  <Binary className="w-5 h-5 mb-1.5" />
+                  <p className="text-[10px]">No binary content</p>
+                </div>
+              )}
+            </div>
+            {bytes.length > 0 && (
+              <button
+                onClick={() => navigator.clipboard.writeText(Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join(''))}
+                className="mt-2 w-full bg-primary hover:bg-primary/90 text-white py-2 rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 active:scale-[0.98]"
+              >
+                <Copy className="w-3 h-3" /> Copy hex
+              </button>
+            )}
+          </div>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
