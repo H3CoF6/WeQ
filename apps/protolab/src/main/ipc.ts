@@ -58,9 +58,11 @@ export function registerIpc(): void {
     const safeCol = req.column.replace(/[^A-Za-z0-9_]/g, '');
     const safeRowid = (req.rowidColumn ?? 'rowid').replace(/[^A-Za-z0-9_]/g, '');
     const limit = Math.min(Math.max(req.limit ?? 20, 1), 200);
+    const offset = Math.max(req.offset ?? 0, 0);
+    const order = req.order === 'ASC' ? 'ASC' : 'DESC';
 
     const rows = await db.query(
-      `SELECT "${safeRowid}", "${safeCol}" FROM "${safeTable}" WHERE "${safeCol}" IS NOT NULL ORDER BY "${safeRowid}" DESC LIMIT ${limit}`,
+      `SELECT "${safeRowid}", "${safeCol}" FROM "${safeTable}" WHERE "${safeCol}" IS NOT NULL ORDER BY "${safeRowid}" ${order} LIMIT ${limit} OFFSET ${offset}`,
     );
 
     const out: CellSample[] = [];

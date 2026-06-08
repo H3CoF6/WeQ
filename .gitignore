@@ -8,8 +8,6 @@ out/
 build/
 *.tsbuildinfo
 
-# native artifacts (resolved at runtime from ../Qrypt-Native; never commit binaries)
-native/**/*.node
 
 # editor / OS
 .DS_Store
