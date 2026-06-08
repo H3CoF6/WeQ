@@ -19,8 +19,15 @@ import type {
 } from '../core';
 import { ElementWire } from '../proto/msg/common/element';
 import * as text from './text';
+import * as pic from './pic';
+import * as ptt from './ptt';
 import * as face from './face';
+import * as gray_tip from './gray_tip';
 import * as ark from './ark';
+import * as multi_msg from './multi_msg';
+import * as call from './call';
+import * as online_file from './online_file';
+import * as online_folder from './online_folder';
 import {
   ElementType,
   type Element,
@@ -38,14 +45,28 @@ interface ElementCodec<E extends Element> {
 
 const codecsByType: Partial<Record<ElementType, ElementCodec<Element>>> = {
   [ElementType.TEXT]: text as unknown as ElementCodec<Element>,
+  [ElementType.PIC]: pic as unknown as ElementCodec<Element>,
+  [ElementType.PTT]: ptt as unknown as ElementCodec<Element>,
   [ElementType.FACE]: face as unknown as ElementCodec<Element>,
+  [ElementType.GRAY_TIP]: gray_tip as unknown as ElementCodec<Element>,
   [ElementType.ARK]: ark as unknown as ElementCodec<Element>,
+  [ElementType.MULTI_MSG]: multi_msg as unknown as ElementCodec<Element>,
+  [ElementType.CALL]: call as unknown as ElementCodec<Element>,
+  [ElementType.ONLINE_FILE]: online_file as unknown as ElementCodec<Element>,
+  [ElementType.ONLINE_FOLDER]: online_folder as unknown as ElementCodec<Element>,
 };
 
 const codecsByKind: Record<string, ElementCodec<Element>> = {
   text: text as unknown as ElementCodec<Element>,
+  pic: pic as unknown as ElementCodec<Element>,
+  ptt: ptt as unknown as ElementCodec<Element>,
   face: face as unknown as ElementCodec<Element>,
+  grayTip: gray_tip as unknown as ElementCodec<Element>,
   ark: ark as unknown as ElementCodec<Element>,
+  multiMsg: multi_msg as unknown as ElementCodec<Element>,
+  call: call as unknown as ElementCodec<Element>,
+  onlineFile: online_file as unknown as ElementCodec<Element>,
+  onlineFolder: online_folder as unknown as ElementCodec<Element>,
 };
 
 export function decodeElement(wire: ProtoDecodeStructType<typeof ElementWire>): Element {
