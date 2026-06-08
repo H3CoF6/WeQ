@@ -1,5 +1,5 @@
 {
-  "name": "@weq/db-reader",
+  "name": "@weq/cipher",
   "version": "0.0.0",
   "private": true,
   "type": "module",

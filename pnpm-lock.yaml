@@ -29,12 +29,12 @@ importers:
       '@trpc/server':
         specifier: ^11.0.0-rc.660
         version: 11.17.0(typescript@5.9.3)
+      '@weq/cipher':
+        specifier: workspace:*
+        version: link:../../packages/cipher
       '@weq/codec':
         specifier: workspace:*
         version: link:../../packages/codec
-      '@weq/db-reader':
-        specifier: workspace:*
-        version: link:../../packages/db-reader
       '@weq/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -132,12 +132,12 @@ importers:
       '@radix-ui/react-tooltip':
         specifier: ^1.2.9
         version: 1.2.9(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@weq/cipher':
+        specifier: workspace:*
+        version: link:../../packages/cipher
       '@weq/codec':
         specifier: workspace:*
         version: link:../../packages/codec
-      '@weq/db-reader':
-        specifier: workspace:*
-        version: link:../../packages/db-reader
       '@weq/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -191,6 +191,12 @@ importers:
         specifier: ^6.0.0
         version: 6.4.3(@types/node@22.19.20)(jiti@2.7.0)(lightningcss@1.32.0)
 
+  packages/cipher:
+    dependencies:
+      '@weq/shared':
+        specifier: workspace:*
+        version: link:../shared
+
   packages/codec:
     dependencies:
       '@protobuf-ts/runtime':
@@ -199,19 +205,10 @@ importers:
       '@weq/shared':
         specifier: workspace:*
         version: link:../shared
-      '@weq/types':
-        specifier: workspace:*
-        version: link:../types
     devDependencies:
       vitest:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.20)(lightningcss@1.32.0)
-
-  packages/db-reader:
-    dependencies:
-      '@weq/shared':
-        specifier: workspace:*
-        version: link:../shared
 
   packages/shared: {}
 

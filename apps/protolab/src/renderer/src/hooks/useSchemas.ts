@@ -13,7 +13,7 @@ import type { ProtoMessageType } from '@weq/codec';
 
 type Mod = Record<string, unknown>;
 
-const modules = import.meta.glob<Mod>('/../../packages/codec/src/proto/**/*.ts', {
+const modules = import.meta.glob<Mod>('../../../../../../packages/codec/src/proto/**/*.ts', {
   eager: true,
 });
 

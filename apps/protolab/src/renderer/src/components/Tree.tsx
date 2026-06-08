@@ -19,18 +19,26 @@ import {
   SearchCode
 } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { ElementWire } from '@weq/codec/proto/msg/common/element';
 
-export function Tree({ fields }: { fields: AnnotatedField[] }) {
+const TAG_TO_FIELD = Object.entries(ElementWire).reduce((acc, [name, field]) => {
+  if (field && typeof field === 'object' && 'no' in field) {
+    acc[field.no as number] = name;
+  }
+  return acc;
+}, {} as Record<number, string>);
+
+export function Tree({ fields, hasSchema }: { fields: AnnotatedField[]; hasSchema?: boolean }) {
   return (
     <div className="font-mono text-xs leading-relaxed select-none">
       {fields.map((f, i) => (
-        <TreeNode key={`${f.raw.start}-${f.raw.tag}-${i}`} node={f} depth={0} />
+        <TreeNode key={`${f.raw.start}-${f.raw.tag}-${i}`} node={f} depth={0} hasSchema={hasSchema} />
       ))}
     </div>
   );
 }
 
-function TreeNode({ node, depth }: { node: AnnotatedField; depth: number }) {
+function TreeNode({ node, depth, hasSchema }: { node: AnnotatedField; depth: number; hasSchema?: boolean }) {
   const [open, setOpen] = useState(true);
   const [guessIdx, setGuessIdx] = useState(0);
   const [showDetail, setShowDetail] = useState(false);
@@ -54,6 +62,7 @@ function TreeNode({ node, depth }: { node: AnnotatedField; depth: number }) {
         icon: AlertTriangle,
       };
     }
+    if (!hasSchema) return null;
     return {
       label: '(unknown)',
       color: 'text-muted/50',
@@ -84,7 +93,7 @@ function TreeNode({ node, depth }: { node: AnnotatedField; depth: number }) {
           />
         )}
 
-        <div className="flex items-center gap-1.5 min-w-[70px] shrink-0">
+        <div className="flex items-center gap-1.5 min-w-[180px] shrink-0">
           <div className="w-4 flex justify-center">
             {hasChildren ? (
               <motion.div animate={{ rotate: open ? 90 : 0 }} transition={{ duration: 0.15 }}>
@@ -94,10 +103,25 @@ function TreeNode({ node, depth }: { node: AnnotatedField; depth: number }) {
               <div className="w-1 h-1 rounded-full bg-border" />
             )}
           </div>
-          <span className="flex items-center gap-0.5 text-primary font-medium">
-            <Hash className="w-3 h-3 opacity-30" />
-            {node.raw.tag}
-          </span>
+          {(() => {
+            const fieldName = TAG_TO_FIELD[node.raw.tag];
+            const tagColor = node.match.kind === 'matched'
+              ? 'text-emerald-600 dark:text-emerald-400'
+              : node.match.kind === 'type-mismatch'
+              ? 'text-red-600 dark:text-red-400'
+              : 'text-muted/70';
+            return fieldName ? (
+              <span className={cn("flex items-center gap-1 font-medium text-[11px]", tagColor)}>
+                <span className="truncate max-w-[120px]">{fieldName}</span>
+                <span className="text-muted/40">({node.raw.tag})</span>
+              </span>
+            ) : (
+              <span className={cn("flex items-center gap-0.5 font-medium", tagColor)}>
+                <Hash className="w-3 h-3 opacity-30" />
+                {node.raw.tag}
+              </span>
+            );
+          })()}
         </div>
 
         <div className="flex items-center min-w-[70px] shrink-0">
@@ -111,14 +135,16 @@ function TreeNode({ node, depth }: { node: AnnotatedField; depth: number }) {
           </span>
         </div>
 
-        <div className={cn(
-          "flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[11px] min-w-[120px] shrink-0",
-          badge.bg,
-          badge.color
-        )}>
-          <badge.icon className="w-3 h-3" />
-          <span className="truncate max-w-[110px] font-medium">{badge.label}</span>
-        </div>
+        {badge && (
+          <div className={cn(
+            "flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[11px] min-w-[120px] shrink-0",
+            badge.bg,
+            badge.color
+          )}>
+            <badge.icon className="w-3 h-3" />
+            <span className="truncate max-w-[110px] font-medium">{badge.label}</span>
+          </div>
+        )}
 
         <div
           className="flex-1 flex items-center gap-2 overflow-hidden"
@@ -189,7 +215,7 @@ function TreeNode({ node, depth }: { node: AnnotatedField; depth: number }) {
             className="overflow-hidden"
           >
             {node.children!.map((c, i) => (
-              <TreeNode key={`${c.raw.start}-${c.raw.tag}-${i}`} node={c} depth={depth + 1} />
+              <TreeNode key={`${c.raw.start}-${c.raw.tag}-${i}`} node={c} depth={depth + 1} hasSchema={hasSchema} />
             ))}
           </motion.div>
         )}
