@@ -5,7 +5,7 @@
  */
 
 import { ipcMain } from 'electron';
-import { QqDb } from '@weq/db-reader';
+import { QqDb } from '@weq/cipher';
 import { loadNative } from './native/loader';
 import { IPC_CHANNELS, type CellSample, type ColumnRow, type SampleReq, type TableRow } from '../shared/ipc';
 

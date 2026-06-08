@@ -17,7 +17,7 @@
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/utils": "^4.0.0",
     "@weq/codec": "workspace:*",
-    "@weq/db-reader": "workspace:*",
+    "@weq/cipher": "workspace:*",
     "@weq/shared": "workspace:*",
     "@weq/types": "workspace:*",
     "electron-trpc": "^0.7.1",

@@ -23,7 +23,7 @@ import { createRequire } from 'node:module';
 import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { NativeBinding } from '@weq/db-reader';
+import type { NativeBinding } from '@weq/cipher';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);

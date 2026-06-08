@@ -22,7 +22,7 @@
     "@radix-ui/react-tabs": "^1.1.14",
     "@radix-ui/react-tooltip": "^1.2.9",
     "@weq/codec": "workspace:*",
-    "@weq/db-reader": "workspace:*",
+    "@weq/cipher": "workspace:*",
     "@weq/shared": "workspace:*",
     "@weq/types": "workspace:*",
     "framer-motion": "^12.40.0",

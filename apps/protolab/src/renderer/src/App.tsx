@@ -376,7 +376,7 @@ export default function App() {
                     </div>
                     <div className="p-4 overflow-x-auto min-h-[400px]">
                       {annotated ? (
-                        <Tree fields={annotated.annotated ?? toBareAnnotated(annotated.tree)} />
+                        <Tree fields={annotated.annotated ?? toBareAnnotated(annotated.tree)} hasSchema={!!schemaName} />
                       ) : (
                         <div className="flex items-center justify-center flex-col gap-2 text-muted p-8">
                           <AlertCircle className="w-5 h-5 opacity-30" />
