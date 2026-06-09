@@ -33,22 +33,45 @@ export enum InitStatus {
 
 // ---------- QQ process / login detection ---------------------------------
 
-/** Login account row decrypted from `login.db`. */
+/**
+ * Login account row decrypted from `login.db`. Mirrors `LoginAccount` in
+ * `Qrypt-Native/nt_helper/src/detect/login_db.rs` (napi-rs converts the
+ * Rust snake_case fields to camelCase).
+ */
 export interface LoginAccount {
+  /** QQ number (account uin). */
   uin: string;
-  nickName: string;
-  // Other fields are present on the Rust side; consumers add them as needed
-  // by widening this interface, not by guessing here.
-  [key: string]: unknown;
+  /** Long uid used as a routing handle inside the protocol. */
+  uid: string;
+  /** Absolute URL of the cached avatar (CDN, may 404 if old). */
+  avatarUrl: string;
+  /** Display name set on the account. */
+  userName: string;
+  /** A1 cred token (empty if not cached). */
+  a1Key: string;
+  /** Unix seconds. 0 if never seen. */
+  lastLoginAt: number;
 }
 
-/** Port-probe result for one running QQ.exe. */
+/**
+ * Port-probe result for one running QQ.exe. Mirrors `QqPortLoginInfo`
+ * in `Qrypt-Native/nt_helper/src/detect/port.rs`.
+ *
+ * NOTE: this struct does NOT contain `pid` — the napi entry takes pid as
+ * an input parameter and returns just the per-account info. Pair it
+ * with the pid at the call site if you need both.
+ */
 export interface QqPortLoginInfo {
-  pid: number;
-  uin?: string;
-  nickName?: string;
-  loggedIn?: boolean;
-  [key: string]: unknown;
+  /** Local port the info was scraped from (4301/4303/4305/4307/4309). */
+  port: number;
+  /** QQ number. Empty string when port responded but no uin attached. */
+  uin: string;
+  /** Long uid; null when the probe path didn't carry it. */
+  uid: string | null;
+  /** Display name; null when the probe path didn't carry it. */
+  nickName: string | null;
+  /** True if the port reports the account is currently logged in. */
+  loggedIn: boolean;
 }
 
 /** Status returned after injecting the hook DLL into a QQ process. */

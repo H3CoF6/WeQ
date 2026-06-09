@@ -959,7 +959,7 @@ async function main() {
     const qqInfo = resolveQQInfo(process.execPath);
     const wrapper = loadQQWrapper(qqInfo.execPath, qqInfo.fullVersion);
     const loaderDir = process.env.NINEBIRD_LOADER_DIR || (process.env.NINEBIRD_LOAD_PATH ? import_node_path2.default.dirname(process.env.NINEBIRD_LOAD_PATH) : __dirname);
-    const hookerPath = import_node_path2.default.join(loaderDir, "NineBird.win32-x64.node");
+    const hookerPath = import_node_path2.default.join(loaderDir, "NineBird.node");
     if (!import_node_fs2.default.existsSync(hookerPath)) {
       return sendResultAndExit(false, `NineBird.node not found: ${hookerPath}`);
     }
@@ -1069,9 +1069,6 @@ async function main() {
       listener.onQRCodeSessionFailed = (errType, errCode) => {
         void sendMessage({ kind: "qrcode-state", state: `\u72B6\u6001\u7801\u5F02\u5E38 Type:${errType} Code:${errCode}\uFF0C\u6B63\u5728\u91CD\u65B0\u62C9\u53D6\u4E8C\u7EF4\u7801...` });
         loginService.getQRCodePicture();
-      };
-      listener.onLoginState = (data) => {
-        void sendMessage({ kind: "qrcode-state", state: JSON.stringify(data) });
       };
       listener.onQRCodeLoginSucceed = (loginResult) => {
         loginUid = loginResult.uid;

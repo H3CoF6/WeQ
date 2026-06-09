@@ -7,7 +7,11 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "test:win32-detect": "tsx test/win32_detect.ts",
+    "test:key-alive": "tsx test/key_alive_qq.ts",
+    "test:key-quick": "tsx test/key_quick_login.ts",
+    "test:key-qr": "tsx test/key_qr_login.ts"
   },
   "dependencies": {
     "@weq/account": "workspace:*",
@@ -17,6 +21,9 @@
     "@weq/platform": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^22.10.6"
+    "@types/node": "^22.10.6",
+    "qrcode": "^1.5.4",
+    "@types/qrcode": "^1.5.5",
+    "tsx": "^4.19.2"
   }
 }
