@@ -1,9 +1,20 @@
-export default function App() {
-  return (
-    <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-8">
-      <h1 className="text-4xl font-bold tracking-tight">weQ</h1>
-      <p className="text-muted-foreground">QQ NT 本地聊天记录解密 · 查看 · 分析</p>
-      <p className="text-sm text-muted-foreground">Electron + React 19 + Tailwind v4</p>
-    </main>
-  );
+/**
+ * Top-level switch over the three views.
+ *
+ * Intentionally NOT using a router lib — we have three screens and
+ * sequential navigation. `useViewState` from `state/view.ts` holds the
+ * current view enum.
+ */
+
+import type { ReactElement } from 'react';
+import { useViewState } from './state/view';
+import { BootstrapView } from './views/BootstrapView';
+import { PickAccountView } from './views/PickAccountView';
+import { MainView } from './views/MainView';
+
+export default function App(): ReactElement {
+  const view = useViewState((s) => s.view);
+  if (view === 'bootstrap') return <BootstrapView />;
+  if (view === 'pick-account') return <PickAccountView />;
+  return <MainView />;
 }

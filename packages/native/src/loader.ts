@@ -93,18 +93,31 @@ function resolveNativeRoot(): string {
     if (existsSync(packaged)) return packaged;
   }
 
-  // Dev: walk up from this file until we find a `native/` sibling of
-  // `packages/`. Start at packages/native/{src|dist} → up to repo root.
-  const repoRoot = resolve(here, '..', '..', '..');
-  const devRoot = join(repoRoot, 'native');
-  if (existsSync(devRoot)) return devRoot;
+  // Dev: bundlers (electron-vite) rewrite `import.meta.url` so it points
+  // at the output dir (e.g. apps/desktop/out/main/), not at this source
+  // file. Walk upward looking for a sibling `native/` so we work
+  // regardless of how deep we got bundled.
+  const tried: string[] = [];
+  for (const start of [here, process.cwd()]) {
+    let dir = resolve(start);
+    for (let i = 0; i < 8; i++) {
+      const candidate = join(dir, 'native');
+      tried.push(candidate);
+      if (existsSync(candidate) && existsSync(join(candidate, 'win32'))) {
+        return candidate;
+      }
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
 
   throw new Error(
     `Could not locate native/ directory. Tried:\n` +
       `  - WEQ_NATIVE_DIR env var (unset)\n` +
       `  - ${electronResources ? join(electronResources, 'native') : '<not running under Electron>'}\n` +
-      `  - ${devRoot}\n` +
-      `Set WEQ_NATIVE_DIR to override.`,
+      tried.map((t) => `  - ${t}`).join('\n') +
+      `\nSet WEQ_NATIVE_DIR to override.`,
   );
 }
 

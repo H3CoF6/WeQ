@@ -3,9 +3,25 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
+/**
+ * Workspace packages export TS source directly (no build step). They must
+ * be bundled into main/preload — not externalized — so Node doesn't try
+ * to `import "./index.ts"` at runtime.
+ */
+const EXCLUDE_FROM_EXTERNAL = [
+  '@weq/account',
+  '@weq/codec',
+  '@weq/db',
+  '@weq/native',
+  '@weq/platform',
+  '@weq/service',
+  '@weq/shared',
+  '@weq/types',
+];
+
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin({ exclude: EXCLUDE_FROM_EXTERNAL })],
     resolve: {
       alias: {
         '@main': resolve(__dirname, 'src/main'),
