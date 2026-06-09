@@ -1,0 +1,57 @@
+/**
+ * Platform interface — what every OS adapter must provide.
+ *
+ * Win32 is the only implementation today; mac/linux will land later. The
+ * interface deliberately stays small: it exposes paths + a few QQ probe
+ * primitives, then hands the native binding & resources off to higher
+ * layers (service package). Path resolution is the only thing that
+ * genuinely varies per-OS.
+ */
+
+import type { NativeBundle } from '@weq/native';
+
+export interface Platform {
+  readonly kind: 'win32' | 'darwin' | 'linux';
+
+  /** Loaded .node bundle + companion resources. */
+  readonly native: NativeBundle;
+
+  /**
+   * Per-user writable root for weq's own config + cache. On Windows this is
+   * `%APPDATA%\weq`. The directory is NOT guaranteed to exist — callers
+   * (typically `UserConfigService`) should `mkdir -p` before writing.
+   */
+  appDataRoot(): string;
+
+  /**
+   * Candidate roots that may contain `<uin>/nt_qq/...` directories. Resolved
+   * synchronously from well-known locations on this OS — no I/O needed by
+   * the caller, just iterate and stat.
+   */
+  tencentFilesRoots(): string[];
+
+  /**
+   * Path to `login.db` (global account list). Returns the first one that
+   * exists, or null if none of the candidate roots have it.
+   */
+  loginDbPath(): string | null;
+
+  /**
+   * Resolve `nt_msg.db` for a specific QQ account. Returns null if the dir
+   * exists nowhere.
+   */
+  ntMsgDbPath(uin: string): string | null;
+
+  /**
+   * Absolute path to a currently installed QQ.exe (or platform equivalent).
+   * Used by the launch-based key flows (QR / quick login). Null if QQ isn't
+   * installed at any known location.
+   */
+  qqExePath(): string | null;
+
+  /**
+   * Path to `wrapper.node` inside QQ's resources/app. The `protocol` layer
+   * inside `nt_helper` needs this to read protobuf descriptors at runtime.
+   */
+  qqWrapperNodePath(): string | null;
+}

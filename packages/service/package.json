@@ -1,0 +1,22 @@
+{
+  "name": "@weq/service",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@weq/account": "workspace:*",
+    "@weq/codec": "workspace:*",
+    "@weq/db": "workspace:*",
+    "@weq/native": "workspace:*",
+    "@weq/platform": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.6"
+  }
+}

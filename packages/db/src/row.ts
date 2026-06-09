@@ -3,11 +3,12 @@
  * name. Saves callers from indexing by position when they already know the
  * schema.
  *
- * Lightweight helper — the heavy lifting (open/decrypt/cache) is in the
- * native layer, this is just a convenience wrapper.
+ * Lightweight helper — the heavy lifting (open/decrypt/cache) lives in the
+ * native layer; this is just a convenience wrapper used by the per-table
+ * Db classes (`C2cMsgDb`, `GroupMsgDb`, …).
  */
 
-import type { SqlRow, SqlValue } from './types';
+import type { SqlRow, SqlValue } from '@weq/native';
 
 export function rowsToObjects<T extends Record<string, SqlValue>>(
   rows: SqlRow[],

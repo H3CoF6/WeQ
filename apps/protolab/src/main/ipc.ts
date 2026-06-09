@@ -5,8 +5,8 @@
  */
 
 import { ipcMain } from 'electron';
-import { QqDb } from '@weq/cipher';
-import { loadNative } from './native/loader';
+import { QqDb } from '@weq/db';
+import { loadNative } from '@weq/native';
 import { IPC_CHANNELS, type CellSample, type ColumnRow, type SampleReq, type TableRow } from '../shared/ipc';
 
 const dbCache = new Map<string, QqDb>();
@@ -14,7 +14,7 @@ const dbCache = new Map<string, QqDb>();
 function getDb(dbPath: string, key: string): QqDb {
   const cached = dbCache.get(dbPath);
   if (cached) return cached;
-  const db = new QqDb(loadNative(), { dbPath, key });
+  const db = new QqDb(loadNative().ntHelper, { dbPath, key });
   dbCache.set(dbPath, db);
   return db;
 }

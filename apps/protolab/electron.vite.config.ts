@@ -6,7 +6,13 @@ import tailwindcss from '@tailwindcss/vite';
 // Workspace packages export TS source directly (no build step). They must be
 // bundled into main/preload — not externalized — so Node doesn't try to
 // `import "./index.ts"` at runtime.
-const EXCLUDE_FROM_EXTERNAL = ['@weq/codec', '@weq/cipher', '@weq/shared', '@weq/types'];
+const EXCLUDE_FROM_EXTERNAL = [
+  '@weq/codec',
+  '@weq/db',
+  '@weq/native',
+  '@weq/shared',
+  '@weq/types',
+];
 
 export default defineConfig({
   main: {

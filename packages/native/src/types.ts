@@ -1,0 +1,236 @@
+/**
+ * Public type surface of the `@weq/native` package.
+ *
+ * Mirrors `Qrypt-Native/nt_helper/src/lib.rs` (DB / detect / inject / OIDB)
+ * and the `launchQQ` entry of `NineBirdBoot.node` (login bootstrap).
+ *
+ * The actual .node files live under `<repo>/native/<platform>/<arch>/` and
+ * are loaded by `loader.ts`. Nothing in this file does I/O — it's purely
+ * type-level + a few runtime tag enums.
+ */
+
+// ---------- SQL value plumbing (mirrors database/value.rs) ---------------
+
+/**
+ * One cell value that crosses the napi boundary.
+ *   INTEGER → bigint (i64 precision)
+ *   REAL    → number
+ *   TEXT    → string
+ *   BLOB    → Buffer (Uint8Array also accepted on encode)
+ *   NULL    → null
+ */
+export type SqlValue = null | bigint | number | string | Buffer;
+export type SqlRow = SqlValue[];
+
+// ---------- Init / health ------------------------------------------------
+
+/** Mirrors `InitStatus` in lib.rs. */
+export enum InitStatus {
+  Success = 0,
+  Expired = -1,
+  UnknownError = 99,
+}
+
+// ---------- QQ process / login detection ---------------------------------
+
+/** Login account row decrypted from `login.db`. */
+export interface LoginAccount {
+  uin: string;
+  nickName: string;
+  // Other fields are present on the Rust side; consumers add them as needed
+  // by widening this interface, not by guessing here.
+  [key: string]: unknown;
+}
+
+/** Port-probe result for one running QQ.exe. */
+export interface QqPortLoginInfo {
+  pid: number;
+  uin?: string;
+  nickName?: string;
+  loggedIn?: boolean;
+  [key: string]: unknown;
+}
+
+/** Status returned after injecting the hook DLL into a QQ process. */
+export interface QQInstanceStatus {
+  pid: number;
+  loggedIn: boolean;
+  uin: string;
+}
+
+// ---------- nt_helper.node — full surface --------------------------------
+
+/**
+ * Every function exported by `nt_helper.node` (see lib.rs).
+ *
+ * Methods that lib.rs marks `async` (return `napi::Result<…>` from an async
+ * fn) are Promise-returning here. Sync-on-Rust-side methods return raw
+ * values. Method names use camelCase because napi-rs auto-converts.
+ */
+export interface NtHelperBinding {
+  // --- init / health ---
+  getInitStatus(): InitStatus;
+
+  // --- QQ process / login detection ---
+  probeQqLoginInfo(pid: number): QqPortLoginInfo | null;
+  decryptLoginDb(loginDbPath: string): LoginAccount[];
+  getQqProcesses(): number[];
+
+  // --- key acquisition ---
+  /** "Instance" path: ask a running, logged-in QQ for the db key via OIDB. */
+  requestDecryptKey(pid: number, dbPath: string): Promise<string>;
+
+  // --- hook injection ---
+  injectAndGetStatus(pid: number, dllPath: string): Promise<QQInstanceStatus>;
+  injectAndGetStatusEmbedded(pid: number): Promise<QQInstanceStatus>;
+
+  // --- SQL (cached connection per dbPath) ---
+  executeSql(
+    dbPath: string,
+    sql: string,
+    params?: SqlValue[] | null,
+  ): Promise<SqlRow[]>;
+  executeSqlWithKey(
+    dbPath: string,
+    sql: string,
+    key: string,
+    params?: SqlValue[] | null,
+  ): Promise<SqlRow[]>;
+  executeSqlWrite(
+    dbPath: string,
+    sql: string,
+    params?: SqlValue[] | null,
+  ): Promise<number>;
+  executeSqlWriteWithKey(
+    dbPath: string,
+    sql: string,
+    key: string,
+    params?: SqlValue[] | null,
+  ): Promise<number>;
+  closeDb(dbPath: string): number;
+  closeAllDb(): number;
+
+  // --- bulk decrypt ---
+  fastDecryptDatabase(dbPath: string, outPath: string, key: string): void;
+  safeDecryptDatabase(dbPath: string, outPath: string, key: string): void;
+
+  // --- OIDB service helpers (JSON-stringified results) ---
+  fetchDownloadRkeys(pid: number): Promise<string>;
+  fetchClientKey(pid: number): Promise<string>;
+  fetchSkey(pid: number, uin: string): Promise<string>;
+  fetchPskey(pid: number, uin: string, domain: string): Promise<string>;
+  computeBkn(skey: string): number;
+}
+
+// ---------- NineBirdBoot.node — launch bootstrap -------------------------
+
+/**
+ * Arguments accepted by `NineBirdBoot.launchQQ`. The bootstrap launches a
+ * QQ.exe with the hook DLL pre-loaded and forwards NDJSON events back via
+ * a Named Pipe the caller hands in.
+ *
+ * Both login flows (QR scan / quick UIN) take the same shape — the
+ * difference is which `loadJsPath` is passed (`qr-dbkey.js` vs
+ * `quick-dbkey.js`) and whether `uin` is supplied.
+ */
+export interface LaunchQqOptions {
+  qqExePath: string;
+  hookDllPath: string;
+  qqntJsonPath: string;
+  loadJsPath: string;
+  pipeName: string;
+  loaderDir?: string;
+  /** Required only for the quick-login flow. */
+  uin?: string;
+  timeoutMs?: number;
+}
+
+export interface LaunchQqResult {
+  success: boolean;
+  pid: number;
+  error?: string;
+}
+
+export interface NineBirdBootBinding {
+  launchQQ(opts: LaunchQqOptions): Promise<LaunchQqResult>;
+}
+
+// ---------- NDJSON events flowing back on the pipe -----------------------
+
+/** Quick-login: emitted once after QQ has read its local login.db. */
+export interface NineBirdLoginListEvent {
+  kind: 'login-list';
+  list: LoginAccount[];
+}
+
+/** QR-login: emitted with the URL to encode into a QR code. */
+export interface NineBirdQrcodeEvent {
+  kind: 'qrcode';
+  url: string;
+}
+
+/** QR-login: emitted as the QR state transitions (scanned / confirmed / …). */
+export interface NineBirdQrcodeStateEvent {
+  kind: 'qrcode-state';
+  state: string;
+}
+
+/** Terminal event for both flows. */
+export interface NineBirdResultEvent {
+  kind: 'result';
+  success: boolean;
+  dbkey?: string;
+  error?: string;
+}
+
+export type NineBirdEvent =
+  | NineBirdLoginListEvent
+  | NineBirdQrcodeEvent
+  | NineBirdQrcodeStateEvent
+  | NineBirdResultEvent;
+
+// ---------- Loaded bundle -----------------------------------------------
+
+/**
+ * What `loadNative()` returns: both .node addons + every resource path the
+ * caller needs to hand to `launchQQ`. Resource paths are absolute and
+ * already verified to exist.
+ */
+export interface NativeBundle {
+  ntHelper: NtHelperBinding;
+  nineBirdBoot: NineBirdBootBinding;
+  /** Paths to companion resource files NineBird needs at launch time. */
+  resources: NineBirdResources;
+}
+
+export interface NineBirdResources {
+  /** Directory containing all NineBird companion files. */
+  loaderDir: string;
+  /** Hook DLL injected into QQ on launch (win32 only for now). */
+  hookDllPath: string;
+  /** Spoofed `qqnt.json` placed alongside the hook. */
+  qqntJsonPath: string;
+  /** The auxiliary `NineBird.node` that quick-dbkey/qr-dbkey require inside QQ. */
+  nineBirdAddonPath: string;
+  /** Script loaded inside QQ for the QR-code login flow. */
+  qrDbkeyJsPath: string;
+  /** Script loaded inside QQ for the quick (UIN-cached) login flow. */
+  quickDbkeyJsPath: string;
+}
+
+// ---------- DB-subset alias used by @weq/db ------------------------------
+
+/**
+ * Subset of `NtHelperBinding` the db package uses for its `QqDb` handle.
+ * Carved out so unit tests can construct `QqDb` with a stub binding
+ * without depending on the full native surface.
+ */
+export type NativeBinding = Pick<
+  NtHelperBinding,
+  | 'executeSql'
+  | 'executeSqlWithKey'
+  | 'executeSqlWrite'
+  | 'executeSqlWriteWithKey'
+  | 'closeDb'
+  | 'closeAllDb'
+>;

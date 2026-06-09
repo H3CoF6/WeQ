@@ -29,12 +29,12 @@ importers:
       '@trpc/server':
         specifier: ^11.0.0-rc.660
         version: 11.17.0(typescript@5.9.3)
-      '@weq/cipher':
-        specifier: workspace:*
-        version: link:../../packages/cipher
       '@weq/codec':
         specifier: workspace:*
         version: link:../../packages/codec
+      '@weq/native':
+        specifier: workspace:*
+        version: link:../../packages/native
       '@weq/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -132,12 +132,15 @@ importers:
       '@radix-ui/react-tooltip':
         specifier: ^1.2.9
         version: 1.2.9(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      '@weq/cipher':
-        specifier: workspace:*
-        version: link:../../packages/cipher
       '@weq/codec':
         specifier: workspace:*
         version: link:../../packages/codec
+      '@weq/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@weq/native':
+        specifier: workspace:*
+        version: link:../../packages/native
       '@weq/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -191,11 +194,18 @@ importers:
         specifier: ^6.0.0
         version: 6.4.3(@types/node@22.19.20)(jiti@2.7.0)(lightningcss@1.32.0)
 
-  packages/cipher:
+  packages/account:
     dependencies:
-      '@weq/shared':
+      '@weq/db':
         specifier: workspace:*
-        version: link:../shared
+        version: link:../db
+      '@weq/platform':
+        specifier: workspace:*
+        version: link:../platform
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.6
+        version: 22.19.20
 
   packages/codec:
     dependencies:
@@ -209,6 +219,60 @@ importers:
       vitest:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.20)(lightningcss@1.32.0)
+
+  packages/db:
+    dependencies:
+      '@weq/codec':
+        specifier: workspace:*
+        version: link:../codec
+      '@weq/native':
+        specifier: workspace:*
+        version: link:../native
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.6
+        version: 22.19.20
+
+  packages/native:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.6
+        version: 22.19.20
+      electron:
+        specifier: ^35.0.0
+        version: 35.7.5
+
+  packages/platform:
+    dependencies:
+      '@weq/native':
+        specifier: workspace:*
+        version: link:../native
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.6
+        version: 22.19.20
+
+  packages/service:
+    dependencies:
+      '@weq/account':
+        specifier: workspace:*
+        version: link:../account
+      '@weq/codec':
+        specifier: workspace:*
+        version: link:../codec
+      '@weq/db':
+        specifier: workspace:*
+        version: link:../db
+      '@weq/native':
+        specifier: workspace:*
+        version: link:../native
+      '@weq/platform':
+        specifier: workspace:*
+        version: link:../platform
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.6
+        version: 22.19.20
 
   packages/shared: {}
 
