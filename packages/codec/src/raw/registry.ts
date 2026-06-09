@@ -34,9 +34,6 @@ export interface FieldInfo {
   messageRef?: () => ProtoMessageType;
   optional: boolean;
   repeat: boolean;
-  /** Serialize-time fallback value used when the upper layer didn't supply
-   *  one. Undefined for fields with no declared default. */
-  default?: unknown;
 }
 
 /** Compiled tag-indexed lookup for one schema. */
@@ -66,7 +63,6 @@ function fieldInfo(name: string, f: ProtoFieldType): FieldInfo {
       scalarType: f.type,
       optional: f.optional,
       repeat: f.repeat,
-      default: f.default,
     };
   }
   return {
@@ -76,7 +72,6 @@ function fieldInfo(name: string, f: ProtoFieldType): FieldInfo {
     messageRef: f.type,
     optional: f.optional,
     repeat: f.repeat,
-    default: f.default,
   };
 }
 

@@ -1,10 +1,20 @@
 /**
  * Element abstract model — Layer 2 of the codec stack.
  *
- * `Element` is a discriminated union over `kind`. Each variant carries
- * the cleaned-up high-level fields the renderer cares about. Common fields
- * (id, isSender, subType) live in `BaseElementFields` and are spread into
- * every variant.
+ * `Element` is a discriminated union over `kind`. Each variant directly
+ * mirrors the wire schema's field names (no renaming) and uses TS `?` to
+ * mark which fields are GUARANTEED to appear vs which MAY appear for that
+ * element kind. This required-vs-optional distinction drives downstream
+ * UI choices (e.g. "compose new message" forms know which fields are
+ * mandatory inputs).
+ *
+ * decode flow: ElementWire (raw protobuf) → decodeElement → adds `kind`
+ * discriminator based on `wire.elementType` and forwards every other field
+ * as-is. Nothing is dropped at the element layer; the renderer or msg
+ * pipeline decides what to render or hide.
+ *
+ * encode flow: Element → encodeElement → strips `kind`, fills in
+ * `elementType` from the kind→type map, forwards every other field as-is.
  *
  * `UnknownElement` exists so unknown elementType values from the wire don't
  * have to be dropped — we keep the raw wire envelope and re-emit it on
@@ -15,13 +25,6 @@
 
 import type { ProtoEncodeStructType } from '../core';
 import type { ElementWire } from '../proto/msg/common/element';
-
-/**
- * The set of field names declared on the wire envelope. Used to constrain
- * each element codec's `necessaryFields` so a typo in the codec doesn't
- * silently no-op at runtime.
- */
-export type ElementWireField = keyof typeof ElementWire;
 
 /**
  * Numeric element types as encoded in tag 45002. Independent of the
@@ -40,9 +43,7 @@ export enum ElementType {
   ONLINE_FOLDER = 30,
 }
 
-/**
- * Pic sub-type (tag 45003 when elementType=PIC).
- */
+/** Pic sub-type (tag 45003 when elementType=PIC). */
 export enum PicSubType {
   NORMAL = 0,
   EMOJI = 1,
@@ -58,9 +59,7 @@ export enum PicType {
   ORIGINAL = 1001,
 }
 
-/**
- * Ptt (voice) type discriminator (tag 45906).
- */
+/** Ptt (voice) type discriminator (tag 45906). */
 export enum PttType {
   INTERCOM = 1,
   RECORDING = 2,
@@ -92,9 +91,7 @@ export enum CallSubType {
   REMOTE_ASSIST_FAILED = 34,
 }
 
-/**
- * Call type discriminator (tag 48153).
- */
+/** Call type discriminator (tag 48153). */
 export enum CallType {
   VOICE = 1,
   VIDEO = 2,
@@ -114,126 +111,343 @@ export enum FaceSubType {
   INTERACTIVE = 5,
 }
 
-/** Fields common to every element variant. */
+/** Action type discriminator (tags 48212/48273). */
+export enum ActionType {
+  SYSTEM = 1,
+}
+
+/**
+ * Fields common to every element variant. All optional because the wire
+ * declares them optional — element-specific interfaces tighten as needed.
+ */
 export interface BaseElementFields {
-  elementId: bigint;
+  elementId?: bigint;
   isSender?: boolean;
   subType?: number;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Per-element interfaces — field names match the wire schema exactly.
+// `?` marks fields that may be absent for the kind. Fields without `?` are
+// guaranteed to appear on the wire when the element is well-formed.
+// ─────────────────────────────────────────────────────────────────────────
+
 export interface TextElement extends BaseElementFields {
   kind: 'text';
-  content: string;
-}
-
-export interface FaceElement extends BaseElementFields {
-  kind: 'face';
-  /** Face id (e.g. 358 for dice). */
-  faceId: number;
-  /** Display text shown when the receiver lacks the asset. */
-  faceText: string;
-  /** Dice value "1".."6"; only set when this face is a super-emoji dice. */
-  diceValue?: string;
+  /** Tag 45101. */
+  textContent: string;
+  /** Tag 45102. Envelope flag observed on every TEXT row in the wild. */
+  textReserve?: number;
+  /** Tag 45103. */
+  textEncodingFlag?: number;
+  /** Tag 45104. */
+  fontStyle?: number;
+  /** Tag 45105. */
+  bubbleId?: string;
+  /** Tag 45106. */
+  textInputState?: number;
+  /** Tag 45108. */
+  translationFlag?: number;
+  /** Tag 45109. */
+  linkDetectionFlag?: number;
+  /** Tag 45110. */
+  atMentionMask?: string;
+  /** Tag 45111. */
+  walletFlag?: number;
+  /** Tag 45112. */
+  urlVerifyFlag?: number;
 }
 
 export interface PicElement extends BaseElementFields {
   kind: 'pic';
-  /** Image filename (tag 45402). */
+  /** Tag 45402. */
   fileName: string;
-  /** File size in bytes (tag 45405). */
+  /** Tag 45405. */
   fileSize: number;
-  /** Binary MD5 hash (tag 45406). */
+  /** Tag 45406. */
   md5Bytes: Uint8Array;
-  /** Content verification hash (tag 45408). */
+  /** Tag 45408. */
   contentHash: Uint8Array;
-  /** Image width in pixels (tag 45411). */
+  /** Tag 45411. */
   imgWidth: number;
-  /** Image height in pixels (tag 45412). */
+  /** Tag 45412. */
   imgHeight: number;
-  /** Image type: 1000=normal, 2000=emoji, 1001=original (tag 45416). */
+  /** Tag 45416. */
   imgType: PicType;
-  /** Whether original quality (tag 45418). */
+  /** Tag 45418. */
   isOriginal: boolean;
-  /** Uppercase hex MD5 string (tag 45424). */
+  /** Tag 45424. */
   md5: string;
-  /** Download token (tag 45503). */
+  /** Tag 45503. */
   fileToken: string;
-  /** Upload/processing timestamp (tag 45505). */
+  /** Tag 45505. */
   uploadTime: number;
-  /** Upload timestamp (tag 45517). */
+  /** Tag 45517. */
   uploadTimestamp: number;
-  /** File TTL in seconds (tag 45518). */
+  /** Tag 45518. */
   fileTTL: number;
-  /** Thumbnail download URL (tag 45802). */
+  /** Tag 45802. */
   thumbnailUrl: string;
-  /** Preview download URL (tag 45803). */
+  /** Tag 45803. */
   previewUrl: string;
-  /** Original image download URL (tag 45804). */
+  /** Tag 45804. */
   originalUrl: string;
-  /** Image summary/description, repeated field (tag 45815). */
+  /** Tag 45815. */
   summary: string[];
-  /** CDN host domain (tag 45816). */
+  /** Tag 45816. */
   cdnHost: string;
+  /** Tag 45403. Shared with PTT/ONLINE_FILE. */
+  filePath?: string;
+  /** Tag 45511. */
+  picTransferState?: number;
+  /** Tag 45513. */
+  transferVersion?: number;
+  /** Tag 45817. */
+  picFlag45817?: number;
+  /** Tag 45818. */
+  picFlag45818?: string;
+  /** Tag 45819. */
+  picFlag45819?: string;
+  /** Tag 45820. */
+  picFlag45820?: string;
+  /** Tag 45821. */
+  picFlag45821?: number;
+  /** Tag 45822. */
+  picFlag45822?: number;
+  /** Tag 45823. */
+  picFlag45823?: number;
+  /** Tag 45824. */
+  picFlag45824?: string;
+  /** Tag 45825. */
+  picFlag45825?: number;
+  /** Tag 45826. */
+  picFlag45826?: number;
+  /** Tag 45827. */
+  picFlag45827?: number;
+  /** Tag 45828. */
+  picFlag45828?: string;
 }
 
 export interface PttElement extends BaseElementFields {
   kind: 'ptt';
-  /** Audio filename (tag 45402, shared with PIC). */
+  /** Tag 45402 (shared with PIC). */
   fileName: string;
-  /** Local file path (tag 45403). */
+  /** Tag 45403. */
   filePath: string;
-  /** File size in bytes (tag 45405, shared with PIC). */
+  /** Tag 45405 (shared with PIC). */
   fileSize: number;
-  /** Binary MD5 hash (tag 45406, shared with PIC). */
+  /** Tag 45406 (shared with PIC). */
   md5Bytes: Uint8Array;
-  /** Content verification hash (tag 45408, shared with PIC). */
+  /** Tag 45408 (shared with PIC). */
   contentHash: Uint8Array;
-  /** Whether original quality (tag 45418, shared with PIC). */
+  /** Tag 45418 (shared with PIC). */
   isOriginal: boolean;
-  /** Uppercase hex MD5 string (tag 45424, shared with PIC). */
+  /** Tag 45424 (shared with PIC). */
   md5: string;
-  /** Download token (tag 45503, shared with PIC). */
+  /** Tag 45503 (shared with PIC). */
   fileToken: string;
-  /** Upload/processing timestamp (tag 45505, shared with PIC). */
+  /** Tag 45505 (shared with PIC). */
   uploadTime: number;
-  /** Transfer state (tag 45550). Optional. */
-  transferState?: number;
-  /** Upload timestamp (tag 45517, shared with PIC). */
+  /** Tag 45517 (shared with PIC). */
   uploadTimestamp: number;
-  /** File TTL in seconds (tag 45518, shared with PIC). */
+  /** Tag 45518 (shared with PIC). */
   fileTTL: number;
-  /** Audio summary/description, repeated field (tag 45815, shared with PIC). */
+  /** Tag 45815 (shared with PIC). */
   summary: string[];
-  /** Voice type: 1=intercom, 2=recording (tag 45906). */
+  /** Tag 45906. */
   pttType: PttType;
-  /** Whether voice is changed/transformed (tag 45911). */
+  /** Tag 45911. */
   voiceChanged: boolean;
-  /** Audio waveform data for visualization (tag 45925). */
+  /** Tag 45925. */
   waveform: Uint8Array;
+  /** Tag 45550. */
+  transferState?: number;
+  /** Tag 45511 (shared with PIC). */
+  picTransferState?: number;
+  /** Tag 45513 (shared with PIC). */
+  transferVersion?: number;
+  /** Tag 45907. */
+  pttFlag45907?: number;
+  /** Tag 45909. */
+  pttFlag45909?: number;
+  /** Tag 45922. */
+  pttFlag45922?: number;
+}
+
+export interface FaceElement extends BaseElementFields {
+  kind: 'face';
+  /** Tag 47601. (`FaceIndex.DICE = 358`.) */
+  faceId: number;
+  /** Tag 47602. */
+  faceText: string;
+  /** Tag 45004. */
+  faceExtDesc?: string;
+  /** Tag 47603. Super-emoji category. */
+  superEmojiCategory?: string;
+  /** Tag 47604. Super-emoji code. */
+  superEmojiCode?: string;
+  /** Tag 47605. */
+  superEmojiFlag1?: number;
+  /** Tag 47606. */
+  superEmojiFlag2?: number;
+  /** Tag 47607. Dice value "1".."6" — only present for super-emoji dice. */
+  diceValue?: string;
+  /** Tag 47609. */
+  superEmojiFlag3?: number;
+  /** Tag 47610. */
+  superEmojiFlag4?: number;
+  /** Tag 47622. Whether the emoji supports chain reaction. */
+  canChain?: boolean;
+}
+
+export interface GrayTipElement extends BaseElementFields {
+  kind: 'grayTip';
+  /** Tag 48211 (subType=17). Observed: 12 (poke), 16 (red packet). */
+  actionId: number;
+  /** Tag 48212 (subType=17). 1=system, 1061=poke, 19357=red packet. */
+  detailedId: number;
+  /** Tag 48213 (subType=17). Observed: 7. */
+  typeFlag: number;
+  /** Tag 48214 (subType=17). XML preview document. */
+  grayTipXmlContent: string;
+  /** Tag 48215 (subType=17). Observed: 1132. */
+  businessId: number;
+  /** Tag 48216 (subType=17). */
+  actionUniqueId: number;
+  /** Tag 48271 (subType=17). JSON payload — parse against TipJsonPayload. */
+  tipJson: string;
+  /** Tag 48273 (subType=17). 1=system, matches detailedId. */
+  tipType: number;
+  /** Tag 48210 (subType=17). Nested: {1005: uid, 1006: nickname}. */
+  actionInitiator?: { uid?: string; nickname?: string };
+  /** Tag 43210 (subType=17). Nested: {1005: uid, 1006: nickname}. */
+  actionTarget?: { uid?: string; nickname?: string };
+  /** Tag 48217 (subType=17). Repeated nested: {1005: key, 1006: value}. */
+  actionAttributes?: { key?: string; value?: string }[];
+  /** Tag 48218. */
+  grayTipReserved?: string;
+  /** Tag 48272. Observed: true. */
+  grayTipFlag48272?: boolean;
+  /** Tag 48275. */
+  grayTipFlag48275?: number;
+}
+
+export interface ArkElement extends BaseElementFields {
+  kind: 'ark';
+  /**
+   * Tag 47901. Raw JSON string. Parse with `JSON.parse()` and narrow against
+   * `ArkPayload`. Kept as string so re-serialize is byte-exact (no JSON
+   * key-reorder).
+   */
+  arkData: string;
+}
+
+export interface MultiMsgElement extends BaseElementFields {
+  kind: 'multiMsg';
+  /** Tag 48601. Server resource ID for the merged message chain. */
+  resId: string;
+  /**
+   * Tag 48602. XML preview document. Parse with an XML parser and map to
+   * `MultiMsgXmlPayload`. Kept as raw string so re-serialize is byte-exact.
+   */
+  xmlContent: string;
+  /** Tag 48603. Session identifier; appears as `m_fileName` in the XML. */
+  sessionId: string;
+}
+
+export interface CallElement extends BaseElementFields {
+  kind: 'call';
+  /** Tag 48151. Matches subType. */
+  callType: number;
+  /** Tag 48152. Connection or waiting time in milliseconds. */
+  duration: number;
+  /** Tag 48153. 1=voice, 2=video, 3=screen share, 5=remote assist. */
+  callMethod: CallType;
+  /** Tag 48157. */
+  callSummary: string[];
+  /** Tag 48155. Observed: 0, 1, 2, or absent. */
+  callUnknownType?: number;
+  /** Tag 48156. */
+  callFlag48156?: number;
+}
+
+export interface OnlineFileElement extends BaseElementFields {
+  kind: 'onlineFile';
+  /** Tag 45402 (shared with PIC). */
+  fileName: string;
+  /** Tag 45403. */
+  filePath: string;
+  /** Tag 45405 (shared with PIC). */
+  fileSize: number;
+  /** Tag 45411 (shared with PIC). */
+  imgWidth: number;
+  /** Tag 45412 (shared with PIC). */
+  imgHeight: number;
+  /** Tag 45503 (shared with PIC). */
+  fileToken: string;
+  /** Tag 45415. */
+  fileFlag45415?: number;
+  /** Tag 45504. */
+  transferFlag45504?: string;
+}
+
+export interface OnlineFolderElement extends BaseElementFields {
+  kind: 'onlineFolder';
+  /** Tag 45402 (shared with PIC). */
+  fileName: string;
+  /** Tag 45403. */
+  filePath: string;
+  /** Tag 45405 (shared with PIC). */
+  fileSize: number;
+  /** Tag 45503 (shared with PIC). */
+  fileToken: string;
+  /** Tag 45415. */
+  fileFlag45415?: number;
+  /** Tag 45504. */
+  transferFlag45504?: string;
 }
 
 /**
+ * Fallback for elementType values that aren't yet registered in the codec.
+ * Carries the full wire envelope so encodeElement can put it back on disk
+ * exactly as it came in.
+ */
+export interface UnknownElement extends BaseElementFields {
+  kind: 'unknown';
+  elementType: number;
+  raw: ProtoEncodeStructType<typeof ElementWire>;
+}
+
+export type Element =
+  | TextElement
+  | PicElement
+  | PttElement
+  | FaceElement
+  | GrayTipElement
+  | ArkElement
+  | MultiMsgElement
+  | CallElement
+  | OnlineFileElement
+  | OnlineFolderElement
+  | UnknownElement;
+
+// ─────────────────────────────────────────────────────────────────────────
+// Downstream-parsing helper shapes (NOT part of the wire — these describe
+// the structure of JSON/XML payloads carried INSIDE certain wire string
+// fields like arkData, tipJson, grayTipXmlContent, xmlContent).
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
  * Shape of the JSON document stored in wire field 47901 for ARK elements.
- * `meta`'s inner shape varies per `view` (`pubAdArkView`, `news`, …) — the
- * concrete examples that have been documented live as exported sample
- * constants in `element/ark.ts`.
  */
 export interface ArkPayload {
-  /** App identifier, e.g. "com.tencent.gamecenter.mall". */
   app: string;
-  /** Short description shown in AIO list / notification. */
   desc: string;
-  /** View-specific data, keyed by template name (`template3`, `news`, …). */
   meta: Record<string, Record<string, unknown>>;
-  /** Plain-text fallback used when the card can't render. */
   prompt: string;
-  /** Source identifier (often the appid for ads). */
   sourceName?: string;
-  /** Ark template version, e.g. "0.0.3.67". */
   ver?: string;
-  /** Renderer name, e.g. "pubAdArkView". Determines which `meta.<name>` is read. */
   view: string;
-  /** Card verification token + creation timestamp. */
   config?: ArkConfig;
 }
 
@@ -244,37 +458,8 @@ export interface ArkConfig {
   token: string;
 }
 
-export interface ArkElement extends BaseElementFields {
-  kind: 'ark';
-  /**
-   * Raw JSON string from wire field 47901. Parse with `JSON.parse()` and
-   * narrow against `ArkPayload`. The codec deliberately keeps this as
-   * string so re-serialize is byte-exact (no JSON key-reorder).
-   */
-  arkData: string;
-}
-
 /**
- * Shape of the XML document stored in wire field 48602 for MULTI_MSG
- * (merged forward) elements. The XML carries a preview of the forwarded
- * message chain — titles, brief, and metadata for rendering the card.
- *
- * Root element attributes (observed):
- * - serviceID: "35"
- * - templateID: "1"
- * - action: "viewMultiMsg"
- * - brief: plain-text summary, e.g. "[聊天记录]"
- * - m_resid: server resource ID (matches wire field 48601)
- * - m_fileName: session identifier (matches wire field 48603)
- * - tSum: total message count (string-encoded int)
- * - flag: flags (string-encoded int)
- *
- * Child elements:
- * - <item layout="1">: preview content
- *   - <title color="..." size="...">: message preview lines
- *   - <hr />: separator
- *   - <summary color="...">: footer text
- * - <source name="...">: source label
+ * Shape of the XML document stored in wire field 48602 for MULTI_MSG.
  */
 export interface MultiMsgXmlPayload {
   serviceID: string;
@@ -293,58 +478,7 @@ export interface MultiMsgXmlPayload {
   source?: { name: string };
 }
 
-export interface MultiMsgElement extends BaseElementFields {
-  kind: 'multiMsg';
-  /**
-   * Server resource ID for the merged message chain (tag 48601). Used to
-   * fetch the full message history from QQ servers.
-   */
-  resId: string;
-  /**
-   * XML preview document (tag 48602). Carries message titles, summary, and
-   * metadata for rendering the forward card. Parse with an XML parser and
-   * map to `MultiMsgXmlPayload`. The codec keeps it as a raw string so
-   * re-serialize is byte-exact.
-   */
-  xmlContent: string;
-  /**
-   * Session identifier (tag 48603). Links this forward element to its
-   * upload session. Appears as `m_fileName` in the XML.
-   */
-  sessionId: string;
-}
-
-/**
- * User info in action gray tip (nested in tags 48210/43210).
- * Used for poke, red packet, and other interactive actions.
- */
-export interface ActionUser {
-  /** User ID (nested tag 1005). */
-  uid: string;
-  /** User nickname (nested tag 1006). */
-  nickname: string;
-}
-
-/**
- * Key-value attribute in action gray tip (nested in repeated tag 48217).
- */
-export interface ActionAttr {
-  /** Attribute key (nested tag 1005). */
-  key: string;
-  /** Attribute value (nested tag 1006). */
-  value: string;
-}
-
-/**
- * Action type discriminator (tags 48212/48273).
- */
-export enum ActionType {
-  SYSTEM = 1,
-}
-
-/**
- * Tip item in gray tip JSON (tag 48271).
- */
+/** Tip item in gray tip JSON (tag 48271). */
 export interface TipJsonItem {
   type: 'img' | 'qq' | 'nor' | 'url' | string;
   src?: string;
@@ -354,36 +488,12 @@ export interface TipJsonItem {
   jp?: string;
 }
 
-/**
- * Shape of the JSON document in gray tip (tag 48271).
- * Example: {"items":[{"type":"img","src":"..."},{"type":"qq","uid":"..."},...]}
- */
+/** Shape of the JSON document in gray tip (tag 48271). */
 export interface TipJsonPayload {
   items: TipJsonItem[];
 }
 
-/**
- * Shape of the XML document in action gray tip (tag 48214).
- * Example structure:
- * <gtip align="center">
- *   <qq uin="..." col="1" nm="" />
- *   <img src="..." jp="..." />
- *   <nor txt="戳了戳"/>
- *   <qq uin="..." col="1" nm="" tp="0"/>
- *   <nor txt="的oF₆，剩下甲基吲哚"/>
- * </gtip>
- */
-/**
- * Shape of the XML document in action gray tip (tag 48214).
- * Example structure:
- * <gtip align="center">
- *   <qq uin="..." col="1" nm="" />
- *   <img src="..." jp="..." />
- *   <nor txt="戳了戳"/>
- *   <qq uin="..." col="1" nm="" tp="0"/>
- *   <nor txt="的oF₆，剩下甲基吲哚"/>
- * </gtip>
- */
+/** Shape of the XML document in action gray tip (tag 48214). */
 export interface ActionXmlPayload {
   align: string;
   elements: Array<{
@@ -397,84 +507,3 @@ export interface ActionXmlPayload {
     txt?: string;
   }>;
 }
-
-export interface GrayTipElement extends BaseElementFields {
-  kind: 'grayTip';
-  /** Action initiator user info (tag 48210, subType=17). */
-  actionInitiator: ActionUser;
-  /** Action target user info (tag 43210, subType=17). */
-  actionTarget: ActionUser;
-  /** Action type ID (tag 48211, subType=17). Observed: 12 (poke), 16 (red packet). */
-  actionId: number;
-  /** Detailed action ID (tag 48212, subType=17). 1=system, 1061=poke, 19357=red packet. */
-  detailedId: number;
-  /** Type flag (tag 48213, subType=17). Observed: 7. */
-  typeFlag: number;
-  /** XML preview document (tag 48214, subType=17). */
-  xmlContent: string;
-  /** Business logic ID (tag 48215, subType=17). Observed: 1132. */
-  businessId: number;
-  /** This action's unique ID (tag 48216, subType=17). */
-  actionUniqueId: number;
-  /** Additional attributes (tag 48217, repeated, subType=17). */
-  attributes: ActionAttr[];
-  /** Tip JSON payload (tag 48271, subType=17). Parse with JSON.parse() to TipJsonPayload. */
-  tipJson: string;
-  /** Tip type (tag 48273, subType=17). 1=system, matches detailedId. */
-  tipType: number;
-}
-
-export interface CallElement extends BaseElementFields {
-  kind: 'call';
-  /** Call status type (tag 48151), matches subType. */
-  callType: number;
-  /** Call duration in milliseconds (tag 48152). Connection time or waiting time. */
-  duration: number;
-  /** Call method (tag 48153). 1=voice, 2=video, 3=screen share, 5=remote assist. */
-  callMethod: CallType;
-  /** Unknown type flag (tag 48155, optional). Observed: 0, 1, 2, or absent. */
-  unknownType?: number;
-  /** Call summary (tag 48157). */
-  summary: string[];
-}
-
-export interface OnlineFileElement extends BaseElementFields {
-  kind: 'onlineFile';
-  /** File name (tag 45402, shared with PIC). */
-  fileName: string;
-  /** Local file path (tag 45403). */
-  filePath: string;
-  /** File size in bytes (tag 45405, shared with PIC). */
-  fileSize: number;
-  /** Image width if applicable (tag 45411, shared with PIC). */
-  imgWidth: number;
-  /** Image height if applicable (tag 45412, shared with PIC). */
-  imgHeight: number;
-  /** Download token (tag 45503, shared with PIC). */
-  fileToken: string;
-}
-
-export interface OnlineFolderElement extends BaseElementFields {
-  kind: 'onlineFolder';
-  /** Folder name (tag 45402, shared with PIC). */
-  fileName: string;
-  /** Local folder path (tag 45403). */
-  filePath: string;
-  /** Folder size in bytes (tag 45405, shared with PIC). */
-  fileSize: number;
-  /** Folder token (tag 45503, shared with PIC). */
-  fileToken: string;
-}
-
-/**
- * Fallback for elementType values that aren't yet registered in the codec.
- * Carries the full wire envelope so encodeElement can put it back on disk
- * exactly as it came in.
- */
-export interface UnknownElement extends BaseElementFields {
-  kind: 'unknown';
-  elementType: number;
-  raw: ProtoEncodeStructType<typeof ElementWire>;
-}
-
-export type Element = TextElement | PicElement | PttElement | FaceElement | GrayTipElement | ArkElement | MultiMsgElement | CallElement | OnlineFileElement | OnlineFolderElement | UnknownElement;

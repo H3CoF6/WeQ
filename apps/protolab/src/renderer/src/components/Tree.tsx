@@ -72,11 +72,6 @@ function TreeNode({ node, depth, hasSchema }: { node: AnnotatedField; depth: num
     };
   })();
 
-  const defaultHint =
-    node.match.kind === 'matched' && node.match.info.default !== undefined
-      ? formatDefault(node.match.info.default)
-      : null;
-
   return (
     <div className="group/node">
       <div
@@ -202,18 +197,6 @@ function TreeNode({ node, depth, hasSchema }: { node: AnnotatedField; depth: num
         >
           <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
           {node.match.reason}
-        </div>
-      )}
-
-      {defaultHint && (
-        <div
-          className="flex items-start gap-2 text-muted text-[10px] py-1 ml-4 border-l-2 border-muted/15"
-          style={{ marginLeft: `${depth * 16 + 32}px`, paddingLeft: '8px' }}
-        >
-          <Binary className="w-3 h-3 mt-0.5 shrink-0 opacity-30" />
-          <span className="opacity-50">
-            default: <code className="font-mono">{defaultHint}</code>
-          </span>
         </div>
       )}
 
@@ -481,17 +464,3 @@ function hexPreview(b: Uint8Array): string {
   return s.trim() + (b.length > 8 ? ' ...' : '');
 }
 
-function formatDefault(v: unknown): string {
-  if (v === null) return 'null';
-  if (v === undefined) return 'undefined';
-  if (typeof v === 'bigint') return `${v.toString()}n`;
-  if (typeof v === 'string') return `"${v}"`;
-  if (v instanceof Uint8Array) return `<${v.length} bytes>`;
-  if (typeof v === 'boolean') return String(v);
-  if (typeof v === 'number') return String(v);
-  try {
-    return JSON.stringify(v);
-  } catch {
-    return String(v);
-  }
-}

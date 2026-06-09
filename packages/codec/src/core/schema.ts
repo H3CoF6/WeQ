@@ -6,9 +6,10 @@
  * literals (`{ str: ProtoField(1, ScalarType.STRING) }`) without a .proto
  * file or codegen step.
  *
- * A field's `default` carries a fallback used by serialize when the upper
- * layer didn't supply a value — useful for envelope flags that QQ expects
- * on the wire but the high-level element model doesn't model.
+ * Encode behavior: only fields the caller actually supplied appear on the
+ * wire. There is no notion of "schema default" — every field is either
+ * present (and emitted) or absent (and omitted). Element-level interfaces
+ * use TS `?` to mark which wire fields are optional vs guaranteed per kind.
  */
 
 // @ts-nocheck — heavy type-level recursion that exceeds TS's inference budget
@@ -68,22 +69,13 @@ export type ScalarTypeToTsType<T extends ScalarType> = T extends
           : never;
 
 /**
- * Options accepted by `ProtoField`. `TsType` constrains `default` so a
- * wrong-type literal (e.g. `default: "hi"` on a UINT32 field) fails at
- * compile time.
+ * Options accepted by `ProtoField`.
  */
-export interface ProtoFieldOpts<TsType, O extends boolean = boolean, R extends boolean = boolean> {
+export interface ProtoFieldOpts<O extends boolean = boolean, R extends boolean = boolean> {
   /** protobuf3 `optional` modifier. */
   optional?: O;
   /** protobuf `repeated` — TS type becomes T[]. */
   repeat?: R;
-  /**
-   * Fallback value supplied by serialize when the upper layer didn't carry
-   * this field. Used for envelope flags QQ expects on the wire but the
-   * element model doesn't expose. Only set this when QQ requires the field
-   * — leave undefined for truly optional fields that can be omitted.
-   */
-  default?: TsType;
 }
 
 export interface BaseProtoFieldType<T, O extends boolean, R extends boolean> {
@@ -92,9 +84,6 @@ export interface BaseProtoFieldType<T, O extends boolean, R extends boolean> {
   type: T;
   optional: O;
   repeat: R;
-  /** Serialize-time default. Untyped at storage; the ProtoField overloads
-   *  type-check it at construction. */
-  default?: unknown;
 }
 
 export interface ScalarProtoFieldType<T extends ScalarType, O extends boolean, R extends boolean>
@@ -124,8 +113,6 @@ export type ProtoMessageType = {
  * @example
  *   // scalar
  *   text: ProtoField(123, ScalarType.STRING, { optional: true }),
- *   // envelope flag — must always be present on the wire, default 1 on encode
- *   flag: ProtoField(124, ScalarType.UINT32, { optional: true, default: 1 }),
  *   // nested message, repeated
  *   elems: ProtoField(2, () => Elem, { optional: true, repeat: true }),
  */
@@ -136,7 +123,7 @@ export function ProtoField<
 >(
   no: number,
   type: T,
-  opts?: ProtoFieldOpts<ScalarTypeToTsType<T>, O, R>,
+  opts?: ProtoFieldOpts<O, R>,
 ): ScalarProtoFieldType<T, O, R>;
 export function ProtoField<
   T extends () => ProtoMessageType,
@@ -145,16 +132,15 @@ export function ProtoField<
 >(
   no: number,
   type: T,
-  opts?: ProtoFieldOpts<unknown, O, R>,
+  opts?: ProtoFieldOpts<O, R>,
 ): MessageProtoFieldType<T, O, R>;
 export function ProtoField(
   no: number,
   type: ScalarType | (() => ProtoMessageType),
-  opts?: ProtoFieldOpts<unknown>,
+  opts?: ProtoFieldOpts,
 ): ProtoFieldType {
   const optional = (opts?.optional ?? false) as boolean;
   const repeat = (opts?.repeat ?? false) as boolean;
-  const defaultValue = opts?.default;
 
   if (typeof type === 'function') {
     return {
@@ -163,7 +149,6 @@ export function ProtoField(
       type,
       optional,
       repeat,
-      default: defaultValue,
     } as ProtoFieldType;
   }
   return {
@@ -172,7 +157,6 @@ export function ProtoField(
     type,
     optional,
     repeat,
-    default: defaultValue,
   } as ProtoFieldType;
 }
 
@@ -270,10 +254,8 @@ class ProtoMsgCore<T extends ProtoMessageType> {
   }
 
   /**
-   * Pure wire serializer — emits exactly what the caller provided. ProtoField
-   * `default` values are NOT auto-injected here; the upper layer (e.g. the
-   * element codec via `necessaryFields`) is responsible for deciding which
-   * defaults are in scope for which call.
+   * Pure wire serializer — emits exactly what the caller provided. Fields
+   * the caller didn't set are omitted from the wire bytes.
    */
   encode(data: ProtoEncodeStructType<T>): Uint8Array {
     return this._proto_msg.toBinary(

@@ -1,109 +1,65 @@
 /**
- * Element codec dispatch table.
+ * Element codec dispatch — thin adapter between wire and Element.
  *
- * Decode: look up `wire.elementType` (tag 45002) here and delegate to that
- * codec's `fromWire`. Unknown elementType → UnknownElement wrapping the
- * raw envelope (re-serialize puts it back byte-for-byte).
+ * Since element interface field names match the wire schema field names
+ * exactly, decode/encode reduce to:
+ *   decode: lookup kind from wire.elementType → spread wire fields + add kind
+ *   encode: drop kind → spread element fields + reconstruct elementType
  *
- * Encode: switch on `el.kind` and delegate to the matching `toWire`, then
- * fill in any category-1 envelope flags the codec listed in
- * `necessaryFields` — pulling their values from the schema's declared
- * `default`. This keeps text-only fields like 45102 from leaking into
- * face/pic/file wire bytes.
+ * Unknown elementType values wrap the raw wire in an UnknownElement so the
+ * bytes survive a round-trip.
  */
 
-import type {
-  ProtoDecodeStructType,
-  ProtoEncodeStructType,
-  ProtoMessageType,
-} from '../core';
+import type { ProtoDecodeStructType, ProtoEncodeStructType } from '../core';
 import { ElementWire } from '../proto/msg/common/element';
-import * as text from './text';
-import * as pic from './pic';
-import * as ptt from './ptt';
-import * as face from './face';
-import * as gray_tip from './gray_tip';
-import * as ark from './ark';
-import * as multi_msg from './multi_msg';
-import * as call from './call';
-import * as online_file from './online_file';
-import * as online_folder from './online_folder';
 import {
   ElementType,
   type Element,
-  type ElementWireField,
   type UnknownElement,
 } from './types';
 
-interface ElementCodec<E extends Element> {
-  fromWire(wire: ProtoDecodeStructType<typeof ElementWire>): E;
-  toWire(el: E): ProtoEncodeStructType<typeof ElementWire>;
-  /** Wire fields whose schema-declared default this codec wants auto-filled
-   *  when the caller's `toWire` didn't supply a value. */
-  necessaryFields: readonly ElementWireField[];
-}
+type KnownKind = Exclude<Element['kind'], 'unknown'>;
 
-const codecsByType: Partial<Record<ElementType, ElementCodec<Element>>> = {
-  [ElementType.TEXT]: text as unknown as ElementCodec<Element>,
-  [ElementType.PIC]: pic as unknown as ElementCodec<Element>,
-  [ElementType.PTT]: ptt as unknown as ElementCodec<Element>,
-  [ElementType.FACE]: face as unknown as ElementCodec<Element>,
-  [ElementType.GRAY_TIP]: gray_tip as unknown as ElementCodec<Element>,
-  [ElementType.ARK]: ark as unknown as ElementCodec<Element>,
-  [ElementType.MULTI_MSG]: multi_msg as unknown as ElementCodec<Element>,
-  [ElementType.CALL]: call as unknown as ElementCodec<Element>,
-  [ElementType.ONLINE_FILE]: online_file as unknown as ElementCodec<Element>,
-  [ElementType.ONLINE_FOLDER]: online_folder as unknown as ElementCodec<Element>,
+const KIND_TO_TYPE: Record<KnownKind, ElementType> = {
+  text: ElementType.TEXT,
+  pic: ElementType.PIC,
+  ptt: ElementType.PTT,
+  face: ElementType.FACE,
+  grayTip: ElementType.GRAY_TIP,
+  ark: ElementType.ARK,
+  multiMsg: ElementType.MULTI_MSG,
+  call: ElementType.CALL,
+  onlineFile: ElementType.ONLINE_FILE,
+  onlineFolder: ElementType.ONLINE_FOLDER,
 };
 
-const codecsByKind: Record<string, ElementCodec<Element>> = {
-  text: text as unknown as ElementCodec<Element>,
-  pic: pic as unknown as ElementCodec<Element>,
-  ptt: ptt as unknown as ElementCodec<Element>,
-  face: face as unknown as ElementCodec<Element>,
-  grayTip: gray_tip as unknown as ElementCodec<Element>,
-  ark: ark as unknown as ElementCodec<Element>,
-  multiMsg: multi_msg as unknown as ElementCodec<Element>,
-  call: call as unknown as ElementCodec<Element>,
-  onlineFile: online_file as unknown as ElementCodec<Element>,
-  onlineFolder: online_folder as unknown as ElementCodec<Element>,
+const TYPE_TO_KIND: Partial<Record<ElementType, KnownKind>> = {
+  [ElementType.TEXT]: 'text',
+  [ElementType.PIC]: 'pic',
+  [ElementType.PTT]: 'ptt',
+  [ElementType.FACE]: 'face',
+  [ElementType.GRAY_TIP]: 'grayTip',
+  [ElementType.ARK]: 'ark',
+  [ElementType.MULTI_MSG]: 'multiMsg',
+  [ElementType.CALL]: 'call',
+  [ElementType.ONLINE_FILE]: 'onlineFile',
+  [ElementType.ONLINE_FOLDER]: 'onlineFolder',
 };
 
 export function decodeElement(wire: ProtoDecodeStructType<typeof ElementWire>): Element {
-  const type = wire.elementType ?? 0;
-  const codec = codecsByType[type as ElementType];
-  if (codec) return codec.fromWire(wire);
-  return makeUnknown(wire, type);
+  const type = (wire.elementType ?? 0) as ElementType;
+  const kind = TYPE_TO_KIND[type];
+  if (!kind) return makeUnknown(wire, wire.elementType ?? 0);
+  return { kind, ...wire } as Element;
 }
 
 export function encodeElement(el: Element): ProtoEncodeStructType<typeof ElementWire> {
   if (el.kind === 'unknown') return el.raw;
-  const codec = codecsByKind[el.kind];
-  if (!codec) {
-    throw new Error(`No encoder registered for element kind: ${el.kind}`);
-  }
-  const wire = codec.toWire(el);
-  return fillNecessaryDefaults(wire, ElementWire, codec.necessaryFields);
-}
-
-/**
- * For each name in `necessary`, if `wire[name]` is undefined and the schema
- * declares a `default` for that field, copy the default in.
- *
- * Returns a shallow-copied object — caller's input is not mutated.
- */
-function fillNecessaryDefaults<W>(
-  wire: W,
-  schema: ProtoMessageType,
-  necessary: readonly string[],
-): W {
-  const out = { ...wire } as Record<string, unknown>;
-  for (const name of necessary) {
-    if (out[name] !== undefined) continue;
-    const field = schema[name];
-    if (field?.default !== undefined) out[name] = field.default;
-  }
-  return out as W;
+  const { kind, ...rest } = el;
+  return {
+    ...rest,
+    elementType: KIND_TO_TYPE[kind as KnownKind],
+  } as ProtoEncodeStructType<typeof ElementWire>;
 }
 
 function makeUnknown(
@@ -112,7 +68,7 @@ function makeUnknown(
 ): UnknownElement {
   return {
     kind: 'unknown',
-    elementId: wire.elementId ?? 0n,
+    elementId: wire.elementId,
     isSender: wire.isSender,
     subType: wire.subType,
     elementType,
