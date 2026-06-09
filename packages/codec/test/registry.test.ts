@@ -6,9 +6,10 @@
  *   2. ProtoMsg(MsgBody).decode — Layer 1 round-trip wire decode.
  *   3. decodeElement — Layer 2 dispatch to TextElement.
  *
- * Also covers ProtoMsg.encode's automatic default injection (category-1
- * envelope flags like 45102 must appear on the wire even when the upper
- * layer didn't supply them).
+ * encodeElement now forwards exactly what the caller supplied; there is no
+ * "default value" auto-injection (removed in the codec refactor). Round-trip
+ * tests prove field preservation and the wire-purity tests prove omitted
+ * fields stay off the wire.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -97,10 +98,10 @@ describe('typed decode via ProtoMsg + decodeElement', () => {
 
     expect(el.kind).toBe('text');
     if (el.kind === 'text') {
-      expect(el.content).toBe('呜呜呜');
+      expect(el.textContent).toBe('呜呜呜');
       expect(el.elementId).toBe(7638353204859217953n);
-      // No `reserve` field — 45102 is category 1, not exposed to element layer.
-      expect((el as Record<string, unknown>).reserve).toBeUndefined();
+      // All wire fields are lifted: 45102 was 0 on the wire, must be on the element.
+      expect(el.textReserve).toBe(0);
     }
   });
 
@@ -115,44 +116,39 @@ describe('typed decode via ProtoMsg + decodeElement', () => {
   });
 });
 
-describe('encodeElement category-1 default injection', () => {
-  it('fills textReserve=0 on TEXT via necessaryFields', () => {
+describe('encodeElement wire purity', () => {
+  it('round-trips textReserve when caller provides it', () => {
     const wire = encodeElement({
       kind: 'text',
       elementId: 1n,
-      content: 'hi',
+      textContent: 'hi',
+      textReserve: 5,
     });
-    expect(wire.textReserve).toBe(0);
-  });
+    expect(wire.textReserve).toBe(5);
 
-  it('TEXT bytes through MsgBody contain 45102 = 0', () => {
-    const wire = encodeElement({ kind: 'text', elementId: 1n, content: 'hi' });
     const bytes = new ProtoMsg(MsgBody).encode({ elements: [wire] });
     const back = new ProtoMsg(MsgBody).decode(bytes);
-    expect(back.elements![0]!.textReserve).toBe(0);
+    expect(back.elements![0]!.textReserve).toBe(5);
   });
 
-  it('does NOT leak TEXT defaults into FACE bytes', () => {
+  it('omits textReserve when caller does not provide it', () => {
     const wire = encodeElement({
-      kind: 'face',
+      kind: 'text',
       elementId: 1n,
-      faceId: 1,
-      faceText: 'x',
+      textContent: 'hi',
     });
     expect(wire.textReserve).toBeUndefined();
 
-    // Verify at the byte level: FACE bytes must not contain tag 45102.
     const bytes = new ProtoMsg(MsgBody).encode({ elements: [wire] });
     const tree = decode(bytes);
     const inner = tree[0]!.guesses.find((g) => g.kind === 'len-nested');
-    expect(inner?.kind).toBe('len-nested');
     if (inner?.kind === 'len-nested') {
       const tags = new Set(inner.value.map((f) => f.tag));
       expect(tags.has(45102)).toBe(false);
     }
   });
 
-  it('does not emit category-2 fields without explicit caller values', () => {
+  it('does not emit untouched fields without explicit caller values', () => {
     const codec = new ProtoMsg(ElementWire);
     const bytes = codec.encode({
       elementId: 1n,
@@ -241,8 +237,8 @@ describe('FaceElement (elementType=6)', () => {
   });
 
   it('silently ignores unknown wire tags during decode', () => {
-    // Hand-craft an envelope containing an UNDECLARED tag 47604, sandwiched
-    // between declared fields. protobuf-ts should treat 47604 as an unknown
+    // Hand-craft an envelope containing an UNDECLARED tag 47608, sandwiched
+    // between declared fields. protobuf-ts should treat 47608 as an unknown
     // field, not error out.
     const codec = new ProtoMsg(ElementWire);
     const knownBytes = codec.encode({
@@ -253,13 +249,13 @@ describe('FaceElement (elementType=6)', () => {
       faceText: 'x',
     });
 
-    // Append an undeclared field manually: tag 47604 (UINT32 varint = 99).
-    // (47604 << 3) | 0 = 380832 → varint encodes to bytes:
-    const tag47604Varint = encodeVarint(BigInt(47604 << 3) | 0n);
+    // Append an undeclared field manually: tag 47608 (varint = 99).
+    // (47608 << 3) | 0 = 380864 → varint encodes to bytes:
+    const tag47608Varint = encodeVarint(BigInt(47608 << 3) | 0n);
     const valueVarint = encodeVarint(99n);
     const merged = new Uint8Array([
       ...knownBytes,
-      ...tag47604Varint,
+      ...tag47608Varint,
       ...valueVarint,
     ]);
 
@@ -295,24 +291,6 @@ describe('ArkElement (elementType=10)', () => {
       expect(parsed.view).toBe('pubAdArkView');
       expect(parsed.meta.template3!.actId).toBe(3062270);
       expect(parsed.config?.token).toBe(SAMPLE_GAME_CENTER_AD.config?.token);
-    }
-  });
-
-  it('does NOT leak TEXT defaults into ARK bytes', () => {
-    const wire = encodeElement({
-      kind: 'ark',
-      elementId: 1n,
-      arkData: '{}',
-    });
-    expect(wire.textReserve).toBeUndefined();
-
-    const bytes = new ProtoMsg(MsgBody).encode({ elements: [wire] });
-    const tree = decode(bytes);
-    const inner = tree[0]!.guesses.find((g) => g.kind === 'len-nested');
-    if (inner?.kind === 'len-nested') {
-      const tags = new Set(inner.value.map((f) => f.tag));
-      expect(tags.has(45102)).toBe(false);
-      expect(tags.has(47901)).toBe(true);
     }
   });
 });

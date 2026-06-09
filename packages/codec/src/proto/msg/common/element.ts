@@ -4,27 +4,20 @@
  *
  * The wire layout is FLAT: `elementType` (45002) is a discriminator that
  * tells you which of the per-type fields (textContent at 45101, … future
- * face/pic/file tags) carry the actual payload. The Element codec layer
- * decides what to lift into the high-level Element model — this schema
- * just describes what bytes can appear.
+ * face/pic/file tags) carry the actual payload.
  *
  * Tag conventions:
  *   - 40010..40019 — envelope-level metadata shared by every element
  *   - 45001..45099 — element common fields (id, type, sub-type, …)
  *   - 45101..45199 — TEXT element specific
- *   - 45201..45299 — (future) FACE
- *   - 49154/49155  — roaming / msg-sync flags, ignored on read & write
+ *   - 45201..45299 — FACE element specific
+ *   - 49154/49155  — roaming / msg-sync flags
  *
- * Each declared field falls into one of three roles:
- *   - Element-visible: read in `element/<kind>.fromWire`, written back in
- *     `toWire` from a field on the Element interface.
- *   - Category 1 (envelope flag): NOT exposed on Element, but QQ requires it
- *     on the wire. Declare with a `default` value and ProtoMsg.encode will
- *     auto-fill it. Example: 45102.
- *   - Category 2 (parse-but-ignore): NOT exposed on Element, NOT required on
- *     write. Declare with NO default so it's parsed for documentation and
- *     protolab visibility, but silently dropped on serialize. Examples:
- *     45103..45112, 49154, 49155.
+ * Philosophy:
+ *   ALL tags are parsed and lifted into Element objects. The msg/UI layer
+ *   decides which fields matter for rendering or editing. This keeps the
+ *   codec layer thin and protocol-focused, avoiding dual maintenance of
+ *   "important" vs "envelope-only" field classifications.
  */
 
 import { ProtoField, ScalarType } from '../../../core';
@@ -63,8 +56,8 @@ export const ElementWire = {
   /** Text content. Required for TEXT elements. */
   textContent: ProtoField(45101, ScalarType.STRING, { optional: true }),
 
-  /** Category 1 — envelope flag QQ always emits as 0. Auto-filled on encode. */
-  textReserve: ProtoField(45102, ScalarType.UINT32, { optional: true, default: 0 }),
+  /** Text envelope flag observed in QQ protocol. */
+  textReserve: ProtoField(45102, ScalarType.UINT32, { optional: true }),
 
   // Category 2 — observed in the wild on TEXT rows. Parsed (so protolab
   // labels them) but neither lifted into TextElement nor written back. Best
@@ -137,11 +130,11 @@ export const ElementWire = {
   /** Upload/processing timestamp. Required for PIC elements. */
   uploadTime: ProtoField(45505, ScalarType.UINT32, { optional: true }),
 
-  /** Category 1 — transfer state flag. Auto-filled on encode. */
-  picTransferState: ProtoField(45511, ScalarType.UINT32, { optional: true, default: 1 }),
+  /** Transfer state flag. */
+  picTransferState: ProtoField(45511, ScalarType.UINT32, { optional: true }),
 
-  /** Category 1 — transfer version flag. Auto-filled on encode. */
-  transferVersion: ProtoField(45513, ScalarType.UINT32, { optional: true, default: 1 }),
+  /** Transfer version flag. */
+  transferVersion: ProtoField(45513, ScalarType.UINT32, { optional: true }),
 
   /** Upload timestamp. Required for PIC elements. */
   uploadTimestamp: ProtoField(45517, ScalarType.UINT32, { optional: true }),
@@ -164,24 +157,24 @@ export const ElementWire = {
   /** CDN host domain. Required for PIC elements. */
   cdnHost: ProtoField(45816, ScalarType.STRING, { optional: true }),
 
-  /** Category 1 — unknown envelope flag. Auto-filled on encode. */
-  picFlag45817: ProtoField(45817, ScalarType.UINT32, { optional: true, default: 0 }),
+  /** PIC protocol flag. */
+  picFlag45817: ProtoField(45817, ScalarType.UINT32, { optional: true }),
 
-  picFlag45818: ProtoField(45818, ScalarType.STRING, { optional: true, default: '' }),
-  picFlag45819: ProtoField(45819, ScalarType.STRING, { optional: true, default: '' }),
-  picFlag45820: ProtoField(45820, ScalarType.STRING, { optional: true, default: '' }),
+  picFlag45818: ProtoField(45818, ScalarType.STRING, { optional: true }),
+  picFlag45819: ProtoField(45819, ScalarType.STRING, { optional: true }),
+  picFlag45820: ProtoField(45820, ScalarType.STRING, { optional: true }),
 
-  picFlag45821: ProtoField(45821, ScalarType.UINT32, { optional: true, default: 0 }),
-  picFlag45822: ProtoField(45822, ScalarType.UINT32, { optional: true, default: 0 }),
-  picFlag45823: ProtoField(45823, ScalarType.UINT32, { optional: true, default: 0 }),
+  picFlag45821: ProtoField(45821, ScalarType.UINT32, { optional: true }),
+  picFlag45822: ProtoField(45822, ScalarType.UINT32, { optional: true }),
+  picFlag45823: ProtoField(45823, ScalarType.UINT32, { optional: true }),
 
-  picFlag45824: ProtoField(45824, ScalarType.STRING, { optional: true, default: '' }),
+  picFlag45824: ProtoField(45824, ScalarType.STRING, { optional: true }),
 
-  picFlag45825: ProtoField(45825, ScalarType.UINT32, { optional: true, default: 0 }),
-  picFlag45826: ProtoField(45826, ScalarType.UINT32, { optional: true, default: 0 }),
-  picFlag45827: ProtoField(45827, ScalarType.UINT32, { optional: true, default: 0 }),
+  picFlag45825: ProtoField(45825, ScalarType.UINT32, { optional: true }),
+  picFlag45826: ProtoField(45826, ScalarType.UINT32, { optional: true }),
+  picFlag45827: ProtoField(45827, ScalarType.UINT32, { optional: true }),
 
-  picFlag45828: ProtoField(45828, ScalarType.STRING, { optional: true, default: '' }),
+  picFlag45828: ProtoField(45828, ScalarType.STRING, { optional: true }),
 
   // ---- PTT (elementType=4) ----
   // PTT reuses most PIC tags (45402-45518, 45815) for file metadata.
@@ -192,15 +185,15 @@ export const ElementWire = {
   /** Voice type: 1=intercom, 2=recording. Required for PTT elements. */
   pttType: ProtoField(45906, ScalarType.UINT32, { optional: true }),
 
-  /** Category 1 — unknown PTT envelope flag. Auto-filled on encode. */
-  pttFlag45907: ProtoField(45907, ScalarType.UINT32, { optional: true, default: 1 }),
+  /** PTT protocol flag. */
+  pttFlag45907: ProtoField(45907, ScalarType.UINT32, { optional: true }),
 
-  pttFlag45909: ProtoField(45909, ScalarType.UINT32, { optional: true, default: 0 }),
+  pttFlag45909: ProtoField(45909, ScalarType.UINT32, { optional: true }),
 
   /** Whether voice is changed/transformed. Required for PTT elements. */
   voiceChanged: ProtoField(45911, ScalarType.BOOL, { optional: true }),
 
-  pttFlag45922: ProtoField(45922, ScalarType.UINT32, { optional: true, default: 0 }),
+  pttFlag45922: ProtoField(45922, ScalarType.UINT32, { optional: true }),
 
   /** Audio waveform data for visualization. Required for PTT elements. */
   waveform: ProtoField(45925, ScalarType.BYTES, { optional: true }),
@@ -252,19 +245,41 @@ export const ElementWire = {
 
   // ---- FACE (elementType=6) ----
 
+  /** Extended description. Optional for FACE elements. */
+  faceExtDesc: ProtoField(45004, ScalarType.STRING, { optional: true }),
+
   /** Face id. Required for FACE elements. (`FaceIndex.DICE = 358`.) */
   faceId: ProtoField(47601, ScalarType.UINT32, { optional: true }),
 
   /** Face text description. Required for FACE elements. */
   faceText: ProtoField(47602, ScalarType.STRING, { optional: true }),
 
+  /** Super-emoji category. Optional for super-emoji FACE elements. */
+  superEmojiCategory: ProtoField(47603, ScalarType.STRING, { optional: true }),
+
+  /** Super-emoji code/number. Optional for super-emoji FACE elements. */
+  superEmojiCode: ProtoField(47604, ScalarType.STRING, { optional: true }),
+
+  /** Super-emoji flag 1. Optional for super-emoji FACE elements. */
+  superEmojiFlag1: ProtoField(47605, ScalarType.UINT32, { optional: true }),
+
+  /** Super-emoji flag 2. Optional for super-emoji FACE elements. */
+  superEmojiFlag2: ProtoField(47606, ScalarType.UINT32, { optional: true }),
+
   /**
    * Super-emoji dice roll, "1".."6" as string. Only present when subType=3
-   * AND faceId points at the dice face. 47603..47606 and 47608+ have been
-   * observed on the wire but never carried anything useful — deliberately
-   * NOT declared here so protobuf-ts skips them as unknown fields.
+   * AND faceId points at the dice face.
    */
   diceValue: ProtoField(47607, ScalarType.STRING, { optional: true }),
+
+  /** Super-emoji flag 3. Optional for super-emoji FACE elements. */
+  superEmojiFlag3: ProtoField(47609, ScalarType.UINT32, { optional: true }),
+
+  /** Super-emoji flag 4. Optional for super-emoji FACE elements. */
+  superEmojiFlag4: ProtoField(47610, ScalarType.UINT32, { optional: true }),
+
+  /** Whether emoji supports chain reaction. Optional for FACE elements. */
+  canChain: ProtoField(47622, ScalarType.BOOL, { optional: true }),
 
   // ---- ARK (elementType=10) ----
 
@@ -309,8 +324,8 @@ export const ElementWire = {
   /** Unknown type flag. Optional for CALL elements. Observed: 0, 1, 2, or absent. */
   callUnknownType: ProtoField(48155, ScalarType.UINT32, { optional: true }),
 
-  /** Category 1 — call envelope flag. Auto-filled on encode. */
-  callFlag48156: ProtoField(48156, ScalarType.UINT32, { optional: true, default: 1 }),
+  /** CALL protocol flag. */
+  callFlag48156: ProtoField(48156, ScalarType.UINT32, { optional: true }),
 
   /** Call summary. Required for CALL elements. */
   callSummary: ProtoField(48157, ScalarType.STRING, { repeat: true }),
@@ -319,11 +334,11 @@ export const ElementWire = {
   // Reuses PIC tags: 45402 (fileName), 45403 (filePath), 45405 (fileSize),
   // 45411 (imgWidth), 45412 (imgHeight), 45503 (fileToken).
 
-  /** Category 1 — file related identifier. Auto-filled on encode. */
-  fileFlag45415: ProtoField(45415, ScalarType.UINT32, { optional: true, default: 750 }),
+  /** File related identifier. */
+  fileFlag45415: ProtoField(45415, ScalarType.UINT32, { optional: true }),
 
-  /** Category 1 — transfer flag. Auto-filled on encode. */
-  transferFlag45504: ProtoField(45504, ScalarType.STRING, { optional: true, default: '' }),
+  /** Transfer flag. */
+  transferFlag45504: ProtoField(45504, ScalarType.STRING, { optional: true }),
 
   // ---- Roaming / sync flags — category 2 envelope tags ----
 

@@ -112,7 +112,7 @@ function decodeBody(blob: SqlValue | undefined): C2cMsg['elements'] {
     return (decoded.elements ?? []).map(decodeElement);
   } catch (e) {
     console.error(`[C2cMsgDb] failed to decode msgBody:`, e);
-    return [{ type: 'text', text: '[解析消息失败: 格式错误]' }];
+    return [{ kind: 'text', textContent: '[解析消息失败: 格式错误]' }];
   }
 }
 

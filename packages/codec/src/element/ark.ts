@@ -1,10 +1,8 @@
 /**
- * ArkElement codec — QQ ark cards (mini-program, game-center ads, news
- * shares, structured forwards, …). Stores a single JSON document at wire
- * field 47901; the codec keeps it as a raw string so re-serialize is
- * byte-exact and JSON key order is preserved.
- *
- * Parse on the upper-layer side using `ArkPayload` to narrow:
+ * ARK sample payloads — captured real-world examples kept as typed constants
+ * for documentation. The actual ArkElement codec lives in `registry.ts`
+ * (decode/encode is a thin field forward); the JSON shape of `arkData` is
+ * described by `ArkPayload` in `types.ts`.
  *
  *   const payload = JSON.parse(el.arkData) as ArkPayload;
  *   if (payload.view === 'pubAdArkView') {
@@ -12,43 +10,10 @@
  *     // ...
  *   }
  *
- * `SAMPLE_GAME_CENTER_AD` below is a real captured row, kept as a typed
- * constant so you don't have to re-open the encrypted DB every time you
- * want to remember which fields a `pubAdArkView` carries. Add more sample
- * constants here as you reverse-engineer other `view` shapes.
+ * Add more sample constants here as you reverse-engineer other `view` shapes.
  */
 
-import type { ProtoDecodeStructType, ProtoEncodeStructType } from '../core';
-import { ElementWire } from '../proto/msg/common/element';
-import {
-  ElementType,
-  type ArkElement,
-  type ArkPayload,
-  type ElementWireField,
-} from './types';
-
-/** ARK rows have no category-1 envelope flags. */
-export const necessaryFields: readonly ElementWireField[] = [];
-
-export function fromWire(wire: ProtoDecodeStructType<typeof ElementWire>): ArkElement {
-  return {
-    kind: 'ark',
-    elementId: wire.elementId ?? 0n,
-    isSender: wire.isSender,
-    subType: wire.subType,
-    arkData: wire.arkData ?? '',
-  };
-}
-
-export function toWire(el: ArkElement): ProtoEncodeStructType<typeof ElementWire> {
-  return {
-    elementId: el.elementId,
-    elementType: ElementType.ARK,
-    isSender: el.isSender,
-    subType: el.subType,
-    arkData: el.arkData,
-  };
-}
+import type { ArkPayload } from './types';
 
 /**
  * Reference shape for `view: "pubAdArkView"` — QQ game-center ad pushed
