@@ -17,7 +17,8 @@
   },
   "dependencies": {
     "@protobuf-ts/runtime": "^2.11.1",
-    "@weq/shared": "workspace:*"
+    "@weq/shared": "workspace:*",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "vitest": "^2.1.8"

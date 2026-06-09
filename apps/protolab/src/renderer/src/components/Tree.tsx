@@ -16,10 +16,12 @@ import {
   X,
   Copy,
   Terminal,
-  SearchCode
+  SearchCode,
+  ShieldCheck
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { ElementWire } from '@weq/codec/proto/msg/common/element';
+import { validateElement } from '../lib/elementValidator';
 
 const TAG_TO_FIELD = Object.entries(ElementWire).reduce((acc, [name, field]) => {
   if (field && typeof field === 'object' && 'no' in field) {
@@ -29,8 +31,39 @@ const TAG_TO_FIELD = Object.entries(ElementWire).reduce((acc, [name, field]) => 
 }, {} as Record<number, string>);
 
 export function Tree({ fields, hasSchema }: { fields: AnnotatedField[]; hasSchema?: boolean }) {
+  const validation = useMemo(() => validateElement(fields), [fields]);
+
   return (
     <div className="font-mono text-xs leading-relaxed select-none">
+      {validation && (
+        <div className="mb-4 p-3 rounded-lg border bg-card">
+          <div className="flex items-center gap-2 mb-2">
+            <ShieldCheck className="w-4 h-4 text-primary" />
+            <span className="text-sm font-semibold">
+              Element Validation: {validation.elementName}
+            </span>
+          </div>
+          {!validation.hasSchema && (
+            <div className="text-xs text-muted">Schema not implemented yet</div>
+          )}
+          {validation.hasSchema && validation.missingRequired.length === 0 && validation.unexpectedFields.length === 0 && (
+            <div className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
+              <CheckCircle2 className="w-3 h-3" />
+              All required fields present, no unexpected fields
+            </div>
+          )}
+          {validation.missingRequired.length > 0 && (
+            <div className="text-xs text-red-600 dark:text-red-400 mt-1">
+              Missing required: {validation.missingRequired.join(', ')}
+            </div>
+          )}
+          {validation.unexpectedFields.length > 0 && (
+            <div className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+              Unexpected tags: {validation.unexpectedFields.join(', ')}
+            </div>
+          )}
+        </div>
+      )}
       {fields.map((f, i) => (
         <TreeNode key={`${f.raw.start}-${f.raw.tag}-${i}`} node={f} depth={0} hasSchema={hasSchema} />
       ))}
