@@ -18,7 +18,7 @@ import { ProtoMsg } from '@weq/codec';
 import { decodeElement } from '@weq/codec';
 import { MsgBody } from '@weq/codec/proto/msg/common/body';
 import type { NtHelperBinding, SqlRow, SqlValue } from '@weq/native';
-import type { C2cMsg } from './types';
+import type { C2cMsg, C2cPeer } from './types';
 import { QqDb } from '../qq_db';
 
 const SELECT_COLUMNS = `"40001","40020","40021","40030","40033","40050","40800"`;
@@ -45,26 +45,44 @@ export class C2cMsgDb {
    * intentionally filter on `40030` (peerUin) — using the uid here would
    * require an extra lookup, and the caller always knows the uin.
    */
-  async listRecentWithPeer(peerUin: bigint, limit = 50): Promise<C2cMsg[]> {
+  async listRecentWithPeer(peerUin: bigint, limit = 50, offset = 0): Promise<C2cMsg[]> {
     const rows = await this.qq.query(
       `SELECT ${SELECT_COLUMNS} FROM c2c_msg_table
         WHERE "40030" = ?
         ORDER BY "40050" DESC
-        LIMIT ?`,
-      [peerUin, BigInt(limit)],
+        LIMIT ? OFFSET ?`,
+      [peerUin, BigInt(limit), BigInt(offset)],
     );
     return rows.map(rowToC2cMsg);
   }
 
   /** Most recent N messages across all peers, newest first. Useful for "test dump". */
-  async listRecent(limit = 50): Promise<C2cMsg[]> {
+  async listRecent(limit = 50, offset = 0): Promise<C2cMsg[]> {
     const rows = await this.qq.query(
       `SELECT ${SELECT_COLUMNS} FROM c2c_msg_table
         ORDER BY "40050" DESC
-        LIMIT ?`,
-      [BigInt(limit)],
+        LIMIT ? OFFSET ?`,
+      [BigInt(limit), BigInt(offset)],
     );
     return rows.map(rowToC2cMsg);
+  }
+
+  /**
+   * Distinct peers that appear in c2c_msg_table, ordered by most recent
+   * message first. Used by the main view's left pane.
+   *
+   * The aggregation is cheap on QQ's index over `40030 + 40050` (the
+   * primary use of the table). Even for a 1M-row db this returns in
+   * sub-second.
+   */
+  async listPeers(): Promise<C2cPeer[]> {
+    const rows = await this.qq.query(
+      `SELECT "40030", MAX("40050"), COUNT(*)
+         FROM c2c_msg_table
+        GROUP BY "40030"
+        ORDER BY MAX("40050") DESC`,
+    );
+    return rows.map(rowToC2cPeer);
   }
 
   /** Drop the cached native connection. Call on account switch / shutdown. */
@@ -89,8 +107,21 @@ function rowToC2cMsg(row: SqlRow): C2cMsg {
 
 function decodeBody(blob: SqlValue | undefined): C2cMsg['elements'] {
   if (!(blob instanceof Uint8Array)) return [];
-  const decoded = bodyCodec.decode(blob);
-  return (decoded.elements ?? []).map(decodeElement);
+  try {
+    const decoded = bodyCodec.decode(blob);
+    return (decoded.elements ?? []).map(decodeElement);
+  } catch (e) {
+    console.error(`[C2cMsgDb] failed to decode msgBody:`, e);
+    return [{ type: 'text', text: '[解析消息失败: 格式错误]' }];
+  }
+}
+
+function rowToC2cPeer(row: SqlRow): C2cPeer {
+  return {
+    peerUin: toBigint(row[0]),
+    lastSendTime: toBigint(row[1]),
+    msgCount: Number(toBigint(row[2])),
+  };
 }
 
 function toBigint(v: SqlValue | undefined): bigint {

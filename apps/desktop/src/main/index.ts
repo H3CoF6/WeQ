@@ -1,11 +1,17 @@
 import { app, BrowserWindow, shell } from 'electron';
 import { electronApp, optimizer, is } from '@electron-toolkit/utils';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { initAppContext } from './context/app_context';
+import { appRouter } from './ipc/router';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-function createWindow(): void {
+const requireFromHere = createRequire(import.meta.url);
+const { createIPCHandler } = requireFromHere('electron-trpc/main') as typeof import('electron-trpc/main');
+
+function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -29,23 +35,31 @@ function createWindow(): void {
   });
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    win.loadURL(process.env['ELECTRON_RENDERER_URL']);
+    void win.loadURL(process.env['ELECTRON_RENDERER_URL']);
   } else {
-    win.loadFile(join(__dirname, '../renderer/index.html'));
+    void win.loadFile(join(__dirname, '../renderer/index.html'));
   }
+  return win;
 }
 
-app.whenReady().then(() => {
+void app.whenReady().then(() => {
   electronApp.setAppUserModelId('app.weq.desktop');
+
+  // Order matters: AppContext (loads native + platform) before IPC handler.
+  initAppContext();
 
   app.on('browser-window-created', (_, win) => {
     optimizer.watchWindowShortcuts(win);
   });
 
-  createWindow();
+  const win = createWindow();
+  createIPCHandler({ router: appRouter, windows: [win] });
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) {
+      const w = createWindow();
+      createIPCHandler({ router: appRouter, windows: [w] });
+    }
   });
 });
 

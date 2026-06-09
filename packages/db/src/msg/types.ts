@@ -23,3 +23,13 @@ export interface C2cMsg {
   sendTime: bigint;
   elements: Element[];
 }
+
+/** One row of the c2c peer list (left pane of the main view). */
+export interface C2cPeer {
+  /** Peer's QQ number — the "conversation id" for c2c chats. */
+  peerUin: bigint;
+  /** Most recent sendTime across all messages with this peer (unix seconds). */
+  lastSendTime: bigint;
+  /** Total messages on file with this peer. */
+  msgCount: number;
+}
