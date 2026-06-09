@@ -1,5 +1,5 @@
 {
-  "name": "@weq/cipher",
+  "name": "@weq/account",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -10,6 +10,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@weq/shared": "workspace:*"
+    "@weq/db": "workspace:*",
+    "@weq/platform": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.6"
   }
 }

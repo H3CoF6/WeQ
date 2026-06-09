@@ -1,0 +1,19 @@
+{
+  "name": "@weq/platform",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./win32": "./src/win32/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@weq/native": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.6"
+  }
+}
