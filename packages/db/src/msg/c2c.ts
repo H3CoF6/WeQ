@@ -18,8 +18,8 @@ import { ProtoMsg } from '@weq/codec';
 import { decodeElement } from '@weq/codec';
 import { MsgBody } from '@weq/codec/proto/msg/common/body';
 import type { NtHelperBinding, SqlRow, SqlValue } from '@weq/native';
-import type { C2cMsg } from './msg';
-import { QqDb } from './qq_db';
+import type { C2cMsg } from './types';
+import { QqDb } from '../qq_db';
 
 const SELECT_COLUMNS = `"40001","40020","40021","40030","40033","40050","40800"`;
 const bodyCodec = new ProtoMsg(MsgBody);

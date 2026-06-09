@@ -975,7 +975,7 @@ async function main() {
     const qqInfo = resolveQQInfo(process.execPath);
     const wrapper = loadQQWrapper(qqInfo.execPath, qqInfo.fullVersion);
     const loaderDir = process.env.NINEBIRD_LOADER_DIR || (process.env.NINEBIRD_LOAD_PATH ? import_node_path2.default.dirname(process.env.NINEBIRD_LOAD_PATH) : __dirname);
-    const hookerPath = import_node_path2.default.join(loaderDir, "NineBird.win32-x64.node");
+    const hookerPath = import_node_path2.default.join(loaderDir, "NineBird.node");
     if (!import_node_fs2.default.existsSync(hookerPath)) {
       return sendResultAndExit(false, `NineBird.node not found: ${hookerPath}`);
     }

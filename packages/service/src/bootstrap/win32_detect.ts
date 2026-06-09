@@ -12,12 +12,19 @@
  * past the constructor.
  */
 
+import { existsSync } from 'node:fs';
 import type { Platform } from '@weq/platform';
 import type { LoginAccount, QqPortLoginInfo } from '@weq/native';
 
 export interface QqInstallInfo {
   qqExePath: string | null;
   wrapperNodePath: string | null;
+  /**
+   * Tencent Files roots that actually exist on disk. Platform's
+   * `tencentFilesRoots()` returns three CANDIDATE locations (used for
+   * error messages), but the diagnostics screen only wants the ones
+   * the user actually has.
+   */
   tencentFilesRoots: string[];
   loginDbPath: string | null;
 }
@@ -35,7 +42,7 @@ export class Win32DetectService {
     return {
       qqExePath: this.platform.qqExePath(),
       wrapperNodePath: this.platform.qqWrapperNodePath(),
-      tencentFilesRoots: this.platform.tencentFilesRoots(),
+      tencentFilesRoots: this.platform.tencentFilesRoots().filter((p) => existsSync(p)),
       loginDbPath: this.platform.loginDbPath(),
     };
   }

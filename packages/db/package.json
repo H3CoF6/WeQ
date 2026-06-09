@@ -7,13 +7,15 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "test:c2c-msg": "tsx test/msg_c2c.ts"
   },
   "dependencies": {
     "@weq/codec": "workspace:*",
     "@weq/native": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^22.10.6"
+    "@types/node": "^22.10.6",
+    "tsx": "^4.19.2"
   }
 }
