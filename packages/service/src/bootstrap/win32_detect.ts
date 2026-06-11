@@ -65,6 +65,9 @@ export class Win32DetectService {
    */
   detectRunningProcesses(): DetectedQqProcess[] {
     const pids = this.platform.native.ntHelper.getQqProcesses();
+    for (const pid of pids) {
+      console.log(this.platform.native.ntHelper.probeQqLoginInfo(pid));
+    }
     return pids.map((pid) => ({
       pid,
       loginInfo: this.platform.native.ntHelper.probeQqLoginInfo(pid),

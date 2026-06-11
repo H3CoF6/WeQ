@@ -36,6 +36,15 @@ import type {
   NineBirdResources,
   NtHelperBinding,
 } from './types';
+import { InitStatus } from './types';
+
+export const INIT_ERROR_MESSAGES: Record<InitStatus, string> = {
+  [InitStatus.Success]: 'Initialization successful',
+  [InitStatus.Expired]: 'Build expired (> 30 days old)',
+  [InitStatus.Damaged]: 'Binary file damaged',
+  [InitStatus.Tampered]: 'Binary file tampered',
+  [InitStatus.UnknownError]: 'Unknown initialization error',
+};
 
 const here = dirname(fileURLToPath(import.meta.url));
 const requireFromHere = createRequire(import.meta.url);
@@ -61,8 +70,16 @@ export function loadNative(opts: LoadNativeOptions = {}): NativeBundle {
 
   const resources = buildResources(nineBirdDir);
 
+  const ntHelper = requireFromHere(ntHelperPath) as NtHelperBinding;
+  const initStatus = ntHelper.getInitStatus();
+
+  if (initStatus !== InitStatus.Success) {
+    const message = INIT_ERROR_MESSAGES[initStatus] || INIT_ERROR_MESSAGES[InitStatus.UnknownError];
+    throw new Error(`nt_helper initialization failed: [${initStatus}] ${message}`);
+  }
+
   cached = {
-    ntHelper: requireFromHere(ntHelperPath) as NtHelperBinding,
+    ntHelper,
     nineBirdBoot: requireFromHere(nineBirdBootPath) as NineBirdBootBinding,
     resources,
   };

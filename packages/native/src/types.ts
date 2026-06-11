@@ -28,6 +28,8 @@ export type SqlRow = SqlValue[];
 export enum InitStatus {
   Success = 0,
   Expired = -1,
+  Damaged = -200,
+  Tampered = -201,
   UnknownError = 99,
 }
 
