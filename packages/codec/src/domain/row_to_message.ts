@@ -14,6 +14,7 @@
 import { ProtoMsg } from '../core';
 import { decodeElement } from '../element';
 import { MsgBody } from '../proto/msg/common/body';
+import { sanitizeBytes } from '../raw';
 import type { Element } from '../element';
 import type { C2cMessage, GroupMessage } from './message';
 
@@ -23,7 +24,15 @@ const bodyCodec = new ProtoMsg(MsgBody);
 
 function decodeBody(blob: unknown): Element[] {
   if (!(blob instanceof Uint8Array)) return [];
-  const decoded = bodyCodec.decode(blob);
+  // Drop fields whose on-wire type conflicts with the schema before handing
+  // the bytes to protobuf-ts; otherwise one mis-declared tag derails the whole
+  // message. Conflicting fields just go missing instead of crashing the decode.
+  let decoded;
+  try {
+    decoded = bodyCodec.decode(sanitizeBytes(blob, MsgBody));
+  } catch {
+    return [];
+  }
   return (decoded.elements ?? []).map(decodeElement);
 }
 

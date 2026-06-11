@@ -77,6 +77,72 @@ export const PicElementSchema = BaseElementFieldsSchema.extend({
   picFlag45826: z.number().optional(),
   picFlag45827: z.number().optional(),
   picFlag45828: z.string().optional(),
+  picFlag45600: z.instanceof(Uint8Array).optional(),
+});
+
+export const FileElementSchema = BaseElementFieldsSchema.extend({
+  kind: z.literal('file'),
+  /**
+   * File type discriminator — ~20 known values observed on FILE rows.
+   * TODO: enumerate as a `FileSubType` enum once the values are mapped.
+   */
+  subType: z.number(),
+  fileName: z.string(),
+  filePath: z.string(),
+  fileSize: z.number(),
+  md5Bytes: z.instanceof(Uint8Array),
+  md5Bytes2: z.instanceof(Uint8Array),
+  contentHash: z.instanceof(Uint8Array),
+  imgWidth: z.number(),
+  imgHeight: z.number(),
+  fileFlag45415: z.number(),
+  fileToken: z.string(),
+  transferFlag45504: z.string(),
+  uploadTime: z.number(),
+  picTransferState: z.number(),
+  transferVersion: z.number(),
+  transferState: z.number(),
+  fileFlag45409: z.instanceof(Uint8Array),
+  fileFlag45501: z.number(),
+  videoToken: z.string(),
+  fileFlag45512: z.boolean(),
+  fileFlag45514: z.boolean(),
+});
+
+export const VideoElementSchema = BaseElementFieldsSchema.extend({
+  kind: z.literal('video'),
+  /**
+   * Video file type discriminator.
+   * TODO: enumerate as a `VideoSubType` enum once the values are mapped.
+   */
+  subType: z.number(),
+  fileName: z.string(),
+  fileSize: z.number(),
+  md5Bytes: z.instanceof(Uint8Array),
+  contentHash: z.instanceof(Uint8Array),
+  imgWidth: z.number(),
+  imgHeight: z.number(),
+  fileFlag45415: z.number(),
+  isOriginal: z.boolean(),
+  fileToken: z.string(),
+  uploadTime: z.number(),
+  picTransferState: z.number(),
+  transferVersion: z.number(),
+  uploadTimestamp: z.number(),
+  fileTTL: z.number(),
+  summary: z.array(z.string()),
+  videoDuration: z.number(),
+  videoWidth: z.number(),
+  videoHeight: z.number(),
+  videoFlag45421: z.instanceof(Uint8Array),
+  coverFileName: z.string(),
+  videoFlag45423: z.boolean(),
+  videoToken: z.string(),
+  expireTimestamp: z.number(),
+  validPeriodSec: z.number(),
+  secondExpireTimestamp: z.number(),
+  channelParams: z.instanceof(Uint8Array),
+  videoFlag45863: z.number(),
 });
 
 export const PttElementSchema = BaseElementFieldsSchema.extend({
@@ -110,13 +176,31 @@ export const FaceElementSchema = BaseElementFieldsSchema.extend({
   faceText: z.string(),
   faceExtDesc: z.string().optional(),
   superEmojiCategory: z.string().optional(),
-  superEmojiCode: z.string().optional(),
+  AniStickerId: z.string().optional(),
   superEmojiFlag1: z.number().optional(),
   superEmojiFlag2: z.number().optional(),
   diceValue: z.string().optional(),
   superEmojiFlag3: z.number().optional(),
   superEmojiFlag4: z.number().optional(),
   canChain: z.boolean().optional(),
+});
+
+export const ReplyElementSchema = BaseElementFieldsSchema.extend({
+  kind: z.literal('reply'),
+  origSenderUid: z.string(),
+  origReceiverUid: z.string(),
+  origMsgSeq: z.number(),
+  origSenderUin: z.number(),
+  origMsgTime: z.number(),
+  origReceiverUin: z.number(),
+  origMsgId: z.bigint(),
+  origMsgIndex: z.number(),
+  replyFlag47422: z.bigint(),
+  origElements: z.array(z.any()),
+  replyOrigMsgIdRef: z.bigint().optional(),
+  replyTextSummary: z.string().optional(),
+  replyFlag47415: z.boolean().optional(),
+  replyFlag47418: z.boolean().optional(),
 });
 
 export const GrayTipElementSchema = BaseElementFieldsSchema.extend({
@@ -142,6 +226,46 @@ export const ArkElementSchema = BaseElementFieldsSchema.extend({
   arkData: z.string(),
 });
 
+export const MfaceElementSchema = BaseElementFieldsSchema.extend({
+  kind: z.literal('mface'),
+  emojiPackId: z.number(),
+  emojiId: z.string(),
+  mfaceFlag80900: z.string(),
+  mfaceType: z.number(),
+  mfaceSubType: z.boolean(),
+  previewMd5: z.instanceof(Uint8Array),
+  mediaType: z.number(),
+  renderFlag: z.boolean(),
+  previewWidth: z.number(),
+  previewHeight: z.number(),
+  isAnimated: z.boolean(),
+  mfaceFlag80907: z.instanceof(Uint8Array).optional(),
+  mfaceFlag80913: z.instanceof(Uint8Array).optional(),
+  mfaceFlag80941: z.instanceof(Uint8Array).optional(),
+  mfaceFlag80942: z.instanceof(Uint8Array).optional(),
+  mfaceFlag80970: z.instanceof(Uint8Array).optional(),
+  mfaceFlag80975: z.number().optional(),
+  mfaceFlag80977: z.instanceof(Uint8Array).optional(),
+  mfaceFlag80978: z.string().optional(),
+  mfaceFlag80980: z.number().optional(),
+  mfaceFlag80981: z.number().optional(),
+  mfaceFlag80983: z.string().optional(),
+  mfaceFlag80995: z.number().optional(),
+});
+
+export const MarkdownElementSchema = BaseElementFieldsSchema.extend({
+  kind: z.literal('markdown'),
+  markdownContent: z.string(),
+  markdownMeta: z.any(),
+  markdownFlag48703: z.any(),
+  markdownFlag48704: z.string(),
+  markdownTextSummary: z.string(),
+  markdownFlag48706: z.number(),
+  flashTransferProto1: z.instanceof(Uint8Array).optional(),
+  flashTransferInfo: z.any().optional(),
+  flashTransferProto3: z.instanceof(Uint8Array).optional(),
+});
+
 export const MultiMsgElementSchema = BaseElementFieldsSchema.extend({
   kind: z.literal('multiMsg'),
   resId: z.string(),
@@ -151,10 +275,11 @@ export const MultiMsgElementSchema = BaseElementFieldsSchema.extend({
 
 export const CallElementSchema = BaseElementFieldsSchema.extend({
   kind: z.literal('call'),
-  callType: z.number(),
+  answerType: z.number(),
   duration: z.number(),
   callMethod: z.nativeEnum(CallType),
   callSummary: z.array(z.string()),
+  callFlag48153: z.string().optional(),
   callUnknownType: z.number().optional(),
   callFlag48156: z.number().optional(),
 });
@@ -190,10 +315,15 @@ export const UnknownElementSchema = BaseElementFieldsSchema.extend({
 export const ElementSchema = z.discriminatedUnion('kind', [
   TextElementSchema,
   PicElementSchema,
+  FileElementSchema,
+  VideoElementSchema,
   PttElementSchema,
   FaceElementSchema,
+  ReplyElementSchema,
   GrayTipElementSchema,
   ArkElementSchema,
+  MfaceElementSchema,
+  MarkdownElementSchema,
   MultiMsgElementSchema,
   CallElementSchema,
   OnlineFileElementSchema,
@@ -204,10 +334,15 @@ export const ElementSchema = z.discriminatedUnion('kind', [
 // Infer TypeScript types from schemas
 export type TextElement = z.infer<typeof TextElementSchema>;
 export type PicElement = z.infer<typeof PicElementSchema>;
+export type FileElement = z.infer<typeof FileElementSchema>;
+export type VideoElement = z.infer<typeof VideoElementSchema>;
 export type PttElement = z.infer<typeof PttElementSchema>;
 export type FaceElement = z.infer<typeof FaceElementSchema>;
+export type ReplyElement = z.infer<typeof ReplyElementSchema>;
 export type GrayTipElement = z.infer<typeof GrayTipElementSchema>;
 export type ArkElement = z.infer<typeof ArkElementSchema>;
+export type MfaceElement = z.infer<typeof MfaceElementSchema>;
+export type MarkdownElement = z.infer<typeof MarkdownElementSchema>;
 export type MultiMsgElement = z.infer<typeof MultiMsgElementSchema>;
 export type CallElement = z.infer<typeof CallElementSchema>;
 export type OnlineFileElement = z.infer<typeof OnlineFileElementSchema>;

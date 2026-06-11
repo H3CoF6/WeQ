@@ -16,6 +16,7 @@
 
 import { ProtoMsg } from '@weq/codec';
 import { decodeElement } from '@weq/codec';
+import { sanitizeBytes } from '@weq/codec/raw';
 import { MsgBody } from '@weq/codec/proto/msg/common/body';
 import type { NtHelperBinding, SqlRow, SqlValue } from '@weq/native';
 import type { C2cMsg, C2cPeer } from './types';
@@ -108,7 +109,10 @@ function rowToC2cMsg(row: SqlRow): C2cMsg {
 function decodeBody(blob: SqlValue | undefined): C2cMsg['elements'] {
   if (!(blob instanceof Uint8Array)) return [];
   try {
-    const decoded = bodyCodec.decode(blob);
+    // Sanitize first: drop fields whose on-wire type conflicts with the schema
+    // so one mis-declared tag can't derail the whole message. Conflicting (or
+    // genuinely missing) fields just go absent instead of failing the decode.
+    const decoded = bodyCodec.decode(sanitizeBytes(blob, MsgBody));
     return (decoded.elements ?? []).map(decodeElement);
   } catch (e) {
     console.error(`[C2cMsgDb] failed to decode msgBody:`, e);
