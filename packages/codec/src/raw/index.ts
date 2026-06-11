@@ -3,3 +3,4 @@ export * from './varint';
 export * from './wire';
 export * from './decode';
 export * from './registry';
+export * from './sanitize';

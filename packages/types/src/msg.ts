@@ -51,23 +51,23 @@ export interface GetFileListParam {
  * 消息元素类型枚举
  */
 export enum ElementType {
-  UNKNOWN = 0,
-  TEXT = 1,
-  PIC = 2,
-  FILE = 3,
-  PTT = 4,
-  VIDEO = 5,
-  FACE = 6,
-  REPLY = 7,
+  UNKNOWN = 0, //
+  TEXT = 1,  //
+  PIC = 2, //
+  FILE = 3, //
+  PTT = 4, //
+  VIDEO = 5, //
+  FACE = 6, //
+  REPLY = 7, //
   GreyTip = 8, // “小灰条”，包括拍一拍 (Poke)、撤回提示等
   WALLET = 9,
-  ARK = 10,
-  MFACE = 11,
+  ARK = 10, //
+  MFACE = 11, //
   LIVEGIFT = 12,
   STRUCTLONGMSG = 13,
-  MARKDOWN = 14,
+  MARKDOWN = 14, //
   GIPHY = 15,
-  MULTIFORWARD = 16,
+  MULTIFORWARD = 16,  //
   INLINEKEYBOARD = 17,
   INTEXTGIFT = 18,
   CALENDAR = 19,
