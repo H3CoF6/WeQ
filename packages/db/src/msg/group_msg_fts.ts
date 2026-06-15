@@ -1,25 +1,5 @@
 /**
- * `buddy_msg_fts` — QQ's full-text-search content table for message text.
- *
- * `buddy_msg_fts.db` actually holds two things:
- *   - `buddy_msg_fts`      — a plain content table with the flattened message
- *                            text + identity keys (what we read here).
- *   - `buddy_msg_fts_fts`  — an FTS5 virtual table over it, declared with
- *                            `tokenize = 'pinyin_letter 0'`.
- *
- * We CAN'T use the FTS5 table: `pinyin_letter` is QQ's own tokenizer, not
- * registered in our SQLCipher build, so any query against `buddy_msg_fts_fts`
- * dies with `no such tokenizer: pinyin_letter`. Instead we search the content
- * table directly with `LIKE` (substring match — robust, tokenizer-free) and
- * rank candidates by a relevance heuristic in JS to surface the best matches.
- *
- * Column map (subset we read):
- *   40001  msgId      (INTEGER UNIQUE — joins back to c2c/group msg tables)
- *   40010  chatType   (ChatType: 1 = c2c, 2 = group, …)
- *   40020  senderUid  (sender)
- *   40021  targetUid  (conversation target — peer uid / group code)
- *   40050  sendTime   (INTEGER, unix seconds — used to order the candidate pool)
- *   41701  content    (the searchable flattened text)
+ * `group_msg_fts` — QQ's full-text-search content table for group message text.
  */
 
 import type { DatabaseAlgorithms, NtHelperBinding, SqlRow } from '@weq/native';
@@ -29,17 +9,12 @@ import { QqDb } from '../qq_db';
 
 const SELECT_COLUMNS = `"40001","40010","40021","40020","41701","40050","41702"`;
 
-/**
- * How many newest LIKE-matching rows to pull before ranking. We over-fetch
- * (relative to `limit`) so the relevance heuristic has room to reorder, then
- * trim to `limit`. Capped so a hot keyword can't drag the whole table in.
- */
 const POOL_FACTOR = 20;
 const MIN_POOL = 100;
 const MAX_POOL = 500;
 
-export interface BuddyMsgFtsDbOptions {
-  /** Absolute path to buddy_msg_fts.db. */
+export interface GroupMsgFtsDbOptions {
+  /** Absolute path to group_msg_fts.db. */
   dbPath: string;
   /** SQLCipher key. */
   key: string;
@@ -47,15 +22,15 @@ export interface BuddyMsgFtsDbOptions {
   algo: DatabaseAlgorithms;
 }
 
-export class BuddyMsgFtsDb {
+export class GroupMsgFtsDb {
   private readonly qq: QqDb;
 
-  constructor(nt: NtHelperBinding, opts: BuddyMsgFtsDbOptions) {
+  constructor(nt: NtHelperBinding, opts: GroupMsgFtsDbOptions) {
     this.qq = new QqDb(nt, { dbPath: opts.dbPath, key: opts.key, algo: opts.algo });
   }
 
   /**
-   * Search messages whose text or filename contains `keyword`, best matches first.
+   * Search group messages whose text or filename contains `keyword`, best matches first.
    */
   async search(keyword: string, limit = 20): Promise<BuddyMsgFtsHit[]> {
     const needle = keyword.trim();
@@ -63,7 +38,7 @@ export class BuddyMsgFtsDb {
 
     const poolSize = Math.min(MAX_POOL, Math.max(limit * POOL_FACTOR, MIN_POOL));
     const rows = await this.qq.query(
-      `SELECT ${SELECT_COLUMNS} FROM buddy_msg_fts
+      `SELECT ${SELECT_COLUMNS} FROM group_msg_fts
         WHERE ("41701" LIKE ? ESCAPE '\\' OR "41702" LIKE ? ESCAPE '\\')
         ORDER BY "40050" DESC
         LIMIT ?`,
@@ -75,19 +50,19 @@ export class BuddyMsgFtsDb {
   }
 
   /**
-   * Search messages within a specific conversation.
+   * Search messages within a specific group.
    */
-  async searchInConversation(targetUid: string, keyword: string, limit = 20): Promise<BuddyMsgFtsHit[]> {
+  async searchInGroup(groupCode: string, keyword: string, limit = 20): Promise<BuddyMsgFtsHit[]> {
     const needle = keyword.trim();
     if (!needle) return [];
 
     const poolSize = Math.min(MAX_POOL, Math.max(limit * POOL_FACTOR, MIN_POOL));
     const rows = await this.qq.query(
-      `SELECT ${SELECT_COLUMNS} FROM buddy_msg_fts
+      `SELECT ${SELECT_COLUMNS} FROM group_msg_fts
         WHERE "40021" = ? AND ("41701" LIKE ? ESCAPE '\\' OR "41702" LIKE ? ESCAPE '\\')
         ORDER BY "40050" DESC
         LIMIT ?`,
-      [targetUid, `%${escapeLike(needle)}%`, `%${escapeLike(needle)}%`, BigInt(poolSize)],
+      [groupCode, `%${escapeLike(needle)}%`, `%${escapeLike(needle)}%`, BigInt(poolSize)],
     );
 
     const hits = rows.map(rowToHit);
@@ -103,7 +78,7 @@ export class BuddyMsgFtsDb {
 
     const poolSize = Math.min(MAX_POOL, Math.max(limit * POOL_FACTOR, MIN_POOL));
     const rows = await this.qq.query(
-      `SELECT ${SELECT_COLUMNS} FROM buddy_msg_fts
+      `SELECT ${SELECT_COLUMNS} FROM group_msg_fts
         WHERE "41702" LIKE ? ESCAPE '\\'
         ORDER BY "40050" DESC
         LIMIT ?`,
@@ -120,19 +95,10 @@ export class BuddyMsgFtsDb {
   }
 }
 
-/** Escape SQLite `LIKE` wildcards so a literal `%`/`_`/`\` in the keyword matches itself. */
 function escapeLike(s: string): string {
   return s.replace(/[\\%_]/g, (m) => `\\${m}`);
 }
 
-/**
- * Rank hits best-first. The score rewards, in priority order:
- *   - exact match (the whole message IS the keyword),
- *   - higher keyword density (keyword占比 of the text),
- *   - more occurrences,
- *   - earlier first position.
- * Ties keep the incoming order (newest first), since `Array.sort` is stable.
- */
 function rankByRelevance(hits: BuddyMsgFtsHit[], needle: string): BuddyMsgFtsHit[] {
   return hits
     .map((hit) => ({ hit, score: scoreOfMultiple(hit.content, hit.fileName || '', needle) }))
