@@ -31,6 +31,7 @@ import {
   Music,
   Pause,
   Play,
+  Radio,
   Search,
   Sticker,
   Trash2,
@@ -43,9 +44,11 @@ import { trpc, client } from '../trpc/client';
 import { useAppDialog } from '../lib/dialogUtils';
 import { useToast } from '../components/Toast';
 import { isDataline, deviceAvatarDataUri } from '../lib/deviceAvatar';
-import { datalineName } from '@weq/codec';
+import { fixProfileAvatarUrl } from '../lib/avatarResolver';
+import { datalineName, toChatTypeNumber } from '@weq/codec';
 import type { ExportPresets } from '@weq/service';
-import { Avatar, Segmented, Spinner } from './export/widgets';
+import { Avatar, Segmented } from './export/widgets';
+import { ChipsSkeleton, PickerListSkeleton, ScheduleListSkeleton } from './export/ExportSkeleton';
 import { ConversationPicker } from './export/ConversationPicker';
 import { SingleSelectPicker } from './export/SingleSelectPicker';
 import { MarketEmojiDownloadPane } from './export/MarketEmojiDownloadPane';
@@ -87,9 +90,15 @@ interface ModeDef {
 const MODES: ModeDef[] = [
   {
     id: 'full',
-    label: '完整消息格式',
+    label: '聊天消息导出',
     desc: 'JSON / JSONL / XLSX / CSV / TXT / HTML',
     icon: <MessagesSquare size={18} />,
+  },
+  {
+    id: 'guild',
+    label: '频道私聊数据',
+    desc: '本地频道私聊 · 完整消息格式（不支持漫游拉取）',
+    icon: <Radio size={18} />,
   },
   {
     id: 'decrypt',
@@ -99,8 +108,8 @@ const MODES: ModeDef[] = [
   },
   {
     id: 'qzone',
-    label: '好友QQ空间导出',
-    desc: '导出好友空间说说',
+    label: 'QQ空间导出',
+    desc: '导出好友 / 自己的空间说说',
     icon: <Globe size={18} />,
   },
   {
@@ -135,10 +144,28 @@ interface ConvWire {
   messageCount?: number;
 }
 
+/** account.getSelfProfile wire 里本页用到的字段（自己的空间选项）。 */
+interface SelfProfileWire {
+  uid: string;
+  uin: string;
+  nick: string;
+  avatarUrl: string;
+}
+
 interface GroupWire {
   groupCode: string;
   groupName: string;
   memberCount: number;
+}
+
+/** 频道私聊会话 wire 行（serde.guildDirectSessionToWire 输出，取导出用到的字段）。 */
+interface GuildSessionWire {
+  nodeId: string;
+  peerTinyId: string;
+  guildName?: string;
+  peerNick: string;
+  peerAvatarUrl: string | null;
+  messageCount?: number;
 }
 
 /** A friend row rendered in the 导出联系人 · 好友 preview list. */
@@ -188,6 +215,13 @@ function fmtSeconds(sec: number): string {
   const m = Math.floor(s / 60);
   const r = s % 60;
   return m > 0 ? `${m}:${String(r).padStart(2, '0')}` : `${s}"`;
+}
+
+/** QQ 空间导出格式收窄：html 直通，其余非 txt 一律回退 json。 */
+function qzoneFormatOf(f: ExportFormat): 'json' | 'txt' | 'html' {
+  if (f === 'txt') return 'txt';
+  if (f === 'html') return 'html';
+  return 'json';
 }
 
 /** wire → 预览行：每种 kind 收敛出「标题 + 摘要」（对齐收藏弹窗各卡片的主信息）。 */
@@ -254,13 +288,21 @@ export function ExportView(): ReactElement {
   const pushToast = useToast((s) => s.push);
 
   const conversations = trpc.account.listConversationsWithCount.useQuery();
+  /** 自己的账号资料 —— QQ 空间导出列表里「自己」这个选项用它取 uin / 昵称。 */
+  const selfProfile = trpc.account.getSelfProfile.useQuery();
   const databases = trpc.account.listDatabases.useQuery();
   const groups = trpc.account.listAllGroups.useQuery({ limit: 2000 });
   const tasks = trpc.account.listExportTasks.useQuery();
   const schedules = trpc.account.listSchedules.useQuery();
 
   const [mode, setMode] = useState<ExportMode>('full');
+  // 频道私聊会话列表（guild_msg.db；只在该模式下加载）。
+  const guildSessions = trpc.account.guildDirectListSessions.useQuery(undefined, {
+    enabled: mode === 'guild',
+  });
   const [convSelection, setConvSelection] = useState<Set<string>>(new Set());
+  /** 频道私聊多选：id = nodeId（与普通会话 uid 空间不同，分开存。） */
+  const [guildSelection, setGuildSelection] = useState<Set<string>>(new Set());
   /** 任务面板展开/收起（默认收起）。 */
   const [taskPanelExpanded, setTaskPanelExpanded] = useState(false);
   /** 新任务到达时，强制选中该任务。 */
@@ -328,9 +370,10 @@ export function ExportView(): ReactElement {
     };
   }, []);
 
-  // 好友空间 only json/txt; 联系人受子类限制 — clamp。
+  // 好友空间 only json/txt/html; 联系人受子类限制 — clamp。
   useEffect(() => {
-    if (mode === 'qzone' && format !== 'json' && format !== 'txt') setFormat('json');
+    if (mode === 'qzone' && format !== 'json' && format !== 'txt' && format !== 'html')
+      setFormat('json');
     if (mode === 'contacts') {
       const allowed =
         contactScope === 'friends'
@@ -439,13 +482,49 @@ export function ExportView(): ReactElement {
     });
   }, [conversations.data]);
 
-  // 好友空间导出：只列私聊好友（排除群聊、公众号、服务号），且需有效 uin。
+  // 频道私聊选择列表：id = nodeId，总数取会话本地消息计数。
+  const guildItems = useMemo<PickItem[]>(() => {
+    return ((guildSessions.data ?? []) as GuildSessionWire[]).map((c) => {
+      const count = Number(c.messageCount ?? 0);
+      return {
+        id: c.nodeId,
+        name: c.peerNick || c.peerTinyId,
+        avatarUrl: c.peerAvatarUrl,
+        total: count,
+        meta: `${fmtCount(count)} 条 · 频道私聊`,
+      };
+    });
+  }, [guildSessions.data]);
+
+  // QQ 空间导出目标：自己的空间（置顶）+ 私聊好友（排除群聊、公众号、服务号，且需有效 uin）。
   const friendItems = useMemo<PickItem[]>(() => {
+    const self = selfProfile.data as SelfProfileWire | null | undefined;
     const raw = (conversations.data ?? []) as ConvWire[];
-    return raw
+    // 导出自己时能看到自己的私密说说，与好友的只读视角不同。
+    const mine: PickItem[] =
+      self?.uin && self.uin !== '0'
+        ? [
+            {
+              id: `self:${self.uin}`,
+              name: self.nick?.trim() ? `${self.nick}（我）` : '我的空间',
+              // 资料库存的头像是 `qh.qlogo.cn/g?b=qq&ek=...&s=`（空 s= 会 400，
+              // 且该域已加进渲染层 CSP）—— 先补成 s=0 直接使用；没有存档头像
+              // 再按 uin 拼公共 CDN 兜底，避免回退成昵称首字符。
+              avatarUrl:
+                fixProfileAvatarUrl(self.avatarUrl) || convAvatarUrl('c2c', self.uid, self.uin),
+              kind: 'c2c',
+              uin: self.uin,
+              total: 0,
+              meta: '自己的空间 · 说说',
+            },
+          ]
+        : [];
+    const friends: PickItem[] = raw
       .filter((c) => {
-        // 排除公众号(103)和服务号(118)
-        const chatTypeNum = Number(c.chatType);
+        // 排除公众号(103)/服务号(118)：wire 的 chatType 既可能是枚举名字符串
+        // （如 KCHATTYPETEMPPUBLICACCOUNT），也可能是数字 —— Number() 直接比较
+        // 会漏掉字符串形态，官方号因此混进列表。统一转数字再判。
+        const chatTypeNum = toChatTypeNumber(c.chatType);
         if (chatTypeNum === 103 || chatTypeNum === 118) return false;
         // 排除群聊
         if (String(c.chatType).includes('GROUP')) return false;
@@ -459,9 +538,11 @@ export function ExportView(): ReactElement {
         kind: 'c2c' as const,
         uin: c.targetUin,
         total: Number(c.messageCount ?? 0),
-        meta: `${fmtCount(Number(c.messageCount ?? 0))} 条 · 私聊`,
+        // 导出的内容是目标空间的说说，不是私聊消息 —— 别拿聊天条数当说明。
+        meta: '好友空间 · 说说',
       }));
-  }, [conversations.data]);
+    return [...mine, ...friends];
+  }, [conversations.data, selfProfile.data]);
 
   const groupItems = useMemo<PickItem[]>(() => {
     return ((groups.data ?? []) as GroupWire[]).map((g) => ({
@@ -550,6 +631,7 @@ export function ExportView(): ReactElement {
       isQzone: Boolean((t as { qzone?: boolean }).qzone),
       isContacts: Boolean((t as { contacts?: unknown }).contacts),
       isCollection: Boolean((t as { collection?: unknown }).collection),
+      isGuild: Boolean((t as { guild?: unknown }).guild),
       // conv === 'marketpack' は商城表情下载タスクの sentinel（task_manager 内で設定）。
       isMarketPack: (t as unknown as { conv?: string }).conv === 'marketpack',
     }));
@@ -675,6 +757,11 @@ export function ExportView(): ReactElement {
     }
     if (mode === 'collection') {
       void runCollectionExport();
+      return;
+    }
+    if (mode === 'guild') {
+      if (guildSelection.size === 0) return;
+      setLightbox('guild');
       return;
     }
     if (convSelection.size === 0) return;
@@ -804,7 +891,7 @@ export function ExportView(): ReactElement {
   }
 
   /**
-   * Pre-flight for 好友空间导出: a live QQ instance must be logged in (the QZone
+   * Pre-flight for QQ 空间导出: a live QQ instance must be logged in (the QZone
    * web CGI needs this account's skey/pskey). Returns false to abort with a
    * prompt to open QQ.
    */
@@ -819,14 +906,14 @@ export function ExportView(): ReactElement {
     if (!online) {
       await dialog.info(
         '需要打开 QQ',
-        '导出好友 QQ 空间需要登录该账号的 QQ 客户端以获取访问凭证。请打开并登录 QQ 后重试。',
+        '导出 QQ 空间需要登录该账号的 QQ 客户端以获取访问凭证。请打开并登录 QQ 后重试。',
       );
       return false;
     }
     return true;
   }
 
-  /** 好友空间导出：每个选中好友起一个说说导出任务（json/txt 多选 + 可选下载配图）。 */
+  /** QQ 空间导出：每个选中目标（好友 / 自己）起一个说说导出任务（json/txt/html 多选 + 配图）。 */
   async function runQzoneExport(options: ExportOptions, formats: ExportFormat[]): Promise<void> {
     const targets = friendItems.filter((it) => convSelection.has(it.id));
     if (targets.length === 0) return;
@@ -838,13 +925,16 @@ export function ExportView(): ReactElement {
     try {
       for (const t of targets) {
         if (!t.uin) continue;
-        const fmt0 = (formats[0] === 'txt' ? 'txt' : 'json') as 'json' | 'txt';
+        const fmt0 = qzoneFormatOf(formats[0] ?? 'json');
         await client.account.startQzoneExport.mutate({
           targetUin: t.uin,
           name: t.name,
           format: fmt0,
-          formats: formats.map((f) => (f === 'txt' ? 'txt' : 'json')) as Array<'json' | 'txt'>,
-          downloadMedia: options.exportMedia,
+          formats: formats.map(qzoneFormatOf),
+          // HTML 需要完整渲染：只要选了 HTML 就强制下载配图 + 拉取评论/点赞
+          // （灯箱里也会锁定勾选）。
+          downloadMedia: options.exportMedia || formats.includes('html'),
+          includeInteraction: options.qzoneInteractions || formats.includes('html'),
           range,
         });
       }
@@ -997,6 +1087,84 @@ export function ExportView(): ReactElement {
     }
   }
 
+  /**
+   * 频道私聊导出：消息源走 guild_msg.db，与完整消息同款格式 /
+   * 媒体 / 装扮 / 头像；唯一差异 = 不支持漫游消息拉取
+   * （completeMessages 恒 false）。
+   */
+  async function runGuildDirectExport(
+    options: ExportOptions,
+    opts: { formats?: ExportFormat[] } = {},
+  ): Promise<void> {
+    const targets = guildItems.filter((it) => guildSelection.has(it.id));
+    // null bounds = open-ended; both null (全部时间) means no filtering.
+    const range = { start: options.range.start, end: options.range.end };
+    const formats = opts.formats && opts.formats.length > 0 ? opts.formats : [format];
+    const media = {
+      exportMedia: options.exportMedia,
+      // 频道私聊没有漫游缓存可拉，这项始终关闭。
+      completeMessages: false,
+      completeMedia: options.exportMedia && options.completeMedia,
+      downloadVideo: options.exportMedia && options.downloadVideo,
+      downloadFile: options.exportMedia && options.downloadFile,
+      downloadPtt: options.exportMedia && options.downloadPtt,
+      transcribeVoice: options.transcribeVoice,
+      mediaKinds: options.exportMedia ? options.mediaKinds : undefined,
+      completeDress: options.completeDress,
+    };
+
+    if (media.completeMedia || media.downloadVideo || media.downloadFile || media.downloadPtt) {
+      const ok = await preflightMediaCompletion();
+      if (!ok) return;
+    } else if (media.exportMedia) {
+      const ok = await dialog.confirm(
+        '未开启媒体补全',
+        '已开启「导出媒体文件」但未开启「补全缺失媒体」。本地缓存中缺失的图片 / 视频 / 文件不会从云端下载，可能有大量媒体无法导出。是否继续？',
+        { okLabel: '继续导出', cancelLabel: '返回', tone: 'warning' },
+      );
+      if (!ok) return;
+    }
+
+    // 语音转写需要已下载的转录模型，缺失则提示去设置页（不阻断其它导出选项）。
+    if (media.transcribeVoice) {
+      const ok = await preflightVoiceTranscribe();
+      if (!ok) return;
+    }
+
+    setSubmitting(true);
+    try {
+      const autoSaveTaskIds: string[] = [];
+      for (const t of targets) {
+        // 多格式合并为同一个任务：所有格式写进同一 bundle，媒体/头像/装扮只带一份。
+        const fmt0 = formats[0] ?? format;
+        const id = await client.account.guildDirectStartExport.mutate({
+          nodeId: t.id,
+          name: t.name,
+          format: fmt0 as Exclude<ExportFormat, 'vcard'>,
+          formats: formats as Exclude<ExportFormat, 'vcard'>[],
+          exportAvatar: options.exportAvatar,
+          ...(options.dress.bubble || options.dress.font || options.dress.widget
+            ? { dress: options.dress }
+            : {}),
+          ...(options.chatlab ? { chatlab: true } : {}),
+          media,
+          range,
+        });
+        if (options.autoSave) autoSaveTaskIds.push(id);
+      }
+      if (autoSaveTaskIds.length > 0) {
+        autoSaveIds.current = new Set([...autoSaveIds.current, ...autoSaveTaskIds]);
+      }
+      setGuildSelection(new Set());
+      setLightbox(null);
+      refetchTasks();
+    } catch (e) {
+      dialog.error('启动频道私聊导出失败', e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   async function runDecryptExport(result: DecryptLightboxResult): Promise<void> {
     const targets = selectedDbs;
     if (targets.length === 0) return;
@@ -1117,14 +1285,20 @@ export function ExportView(): ReactElement {
     // 先把这次确认的配置写进全局 user_config（失败不阻断导出，只影响下次回填）。
     if (
       lightbox === 'full' ||
+      lightbox === 'guild' ||
       lightbox === 'scheduled' ||
       lightbox === 'qzone' ||
       lightbox === 'contacts'
     ) {
-      rememberPreset(lightbox, result);
+      // 频道私聊与完整消息同款灯箱，配置共享。
+      rememberPreset(lightbox === 'guild' ? 'full' : lightbox, result);
     }
     if (lightbox === 'full') {
       void runFullExport(result.options, { formats: result.formats });
+      return;
+    }
+    if (lightbox === 'guild') {
+      void runGuildDirectExport(result.options, { formats: result.formats });
       return;
     }
     if (lightbox === 'qzone') {
@@ -1258,10 +1432,10 @@ export function ExportView(): ReactElement {
 
   const activeMode = MODES.find((m) => m.id === mode)!;
   // 底部格式 chips 只保留给不走灯箱的导出收藏；
-  // 完整消息 / 好友空间 / 定时的格式选择已移入灯箱多选。
+  // 完整消息 / QQ空间 / 定时的格式选择已移入灯箱多选。
   const showFormatChips = mode === 'collection';
   const formatOptions = COLLECTION_FORMATS;
-  // 好友空间导出只列好友（排除群聊）；其余多选模式用全部会话。
+  // QQ空间导出只列目标空间（自己 + 好友）；其余多选模式用全部会话。
   const pickerItems = mode === 'qzone' ? friendItems : convItems;
 
   const primaryLabel =
@@ -1292,7 +1466,9 @@ export function ExportView(): ReactElement {
             ? contactScope === 'group' && !contactGroupId
             : mode === 'collection'
               ? collectionLoading || (collectionCounts.all ?? 0) === 0
-              : convSelection.size === 0;
+              : mode === 'guild'
+                ? guildSelection.size === 0
+                : convSelection.size === 0;
 
   // Lightbox summary line.
   const lightboxSummary = (() => {
@@ -1308,8 +1484,8 @@ export function ExportView(): ReactElement {
       const n = catSelection.size;
       return n ? `${n} 个分组` : '全部好友';
     }
-    const n = convSelection.size;
-    return lightbox === 'qzone' ? `${n} 位好友` : `${n} 个会话`;
+    const n = lightbox === 'guild' ? guildSelection.size : convSelection.size;
+    return lightbox === 'qzone' ? `${n} 个空间` : `${n} 个会话`;
   })();
 
   const lightboxHeadline =
@@ -1318,12 +1494,14 @@ export function ExportView(): ReactElement {
       : lightbox === 'album'
         ? '导出群相册'
         : lightbox === 'qzone'
-          ? '导出好友 QQ 空间'
-          : lightbox === 'contacts'
-            ? contactScope === 'friends'
-              ? '导出好友列表'
-              : '导出群成员列表'
-            : '导出聊天记录';
+          ? '导出 QQ 空间'
+          : lightbox === 'guild'
+            ? '导出频道私聊消息'
+            : lightbox === 'contacts'
+              ? contactScope === 'friends'
+                ? '导出好友列表'
+                : '导出群成员列表'
+              : '导出聊天记录';
 
   return (
     <div className="weq-exp">
@@ -1376,9 +1554,7 @@ export function ExportView(): ReactElement {
                 />
                 <div className="weq-exp-sched-list">
                   {schedules.isLoading ? (
-                    <div className="weq-exp-sched-empty">
-                      <small>加载中…</small>
-                    </div>
+                    <ScheduleListSkeleton />
                   ) : (schedules.data ?? []).length === 0 ? (
                     <div className="weq-exp-sched-empty">
                       <strong>暂无定时任务</strong>
@@ -1403,7 +1579,15 @@ export function ExportView(): ReactElement {
                 loading={conversations.isLoading}
                 selected={convSelection}
                 onChange={setConvSelection}
-                emptyText={mode === 'qzone' ? '暂无好友（仅私聊可导出空间）' : undefined}
+                emptyText={mode === 'qzone' ? '暂无好友（仅私聊会话可作为导出目标）' : undefined}
+              />
+            ) : mode === 'guild' ? (
+              <ConversationPicker
+                items={guildItems}
+                loading={guildSessions.isLoading}
+                selected={guildSelection}
+                onChange={setGuildSelection}
+                emptyText="暂无频道私聊会话（需本机有 QQ 频道私聊记录）"
               />
             ) : mode === 'contacts' ? (
               <div className="weq-exp-contacts">
@@ -1498,15 +1682,19 @@ export function ExportView(): ReactElement {
                     small
                   />
                 </div>
-              ) : mode === 'full' || mode === 'qzone' ? (
+              ) : mode === 'full' || mode === 'qzone' || mode === 'guild' ? (
                 <span className="weq-exp-foot-hint">
                   {mode === 'qzone'
                     ? convSelection.size > 0
-                      ? `已选 ${convSelection.size} 位好友 · 灯箱内选择格式与配图`
-                      : '请先选择至少一位好友'
-                    : convSelection.size > 0
-                      ? `已选 ${convSelection.size} 个会话 · 灯箱内选择格式与内容`
-                      : '请先选择至少一个会话'}
+                      ? `已选 ${convSelection.size} 个空间 · 灯箱内选择格式与媒体`
+                      : '请先选择要导出的空间'
+                    : mode === 'guild'
+                      ? guildSelection.size > 0
+                        ? `已选 ${guildSelection.size} 个会话 · 频道私聊仅本地消息，不支持漫游拉取`
+                        : '请先选择至少一个频道私聊会话'
+                      : convSelection.size > 0
+                        ? `已选 ${convSelection.size} 个会话 · 灯箱内选择格式与内容`
+                        : '请先选择至少一个会话'}
                 </span>
               ) : mode === 'contacts' ? (
                 <span className="weq-exp-foot-hint">
@@ -1573,13 +1761,17 @@ export function ExportView(): ReactElement {
           // 优先回填最近一次导出的配置；联系人导出默认不下载头像（大群头像量大）。
           initialOptions={
             lightbox !== 'album'
-              ? (exportPresets?.[lightbox]?.options ??
+              ? (exportPresets?.[lightbox === 'guild' ? 'full' : lightbox]?.options ??
                 (lightbox === 'contacts'
                   ? { ...DEFAULT_OPTIONS, exportAvatar: false }
                   : DEFAULT_OPTIONS))
               : undefined
           }
-          initialFormats={lightbox !== 'album' ? exportPresets?.[lightbox]?.formats : undefined}
+          initialFormats={
+            lightbox !== 'album'
+              ? exportPresets?.[lightbox === 'guild' ? 'full' : lightbox]?.formats
+              : undefined
+          }
           initialSchedule={exportPresets?.scheduled?.schedule}
           submitting={submitting}
           onPickPath={async () => {
@@ -1671,9 +1863,7 @@ function CategoryChips({
         <small>{allActive ? `全部好友 · ${total} 人` : `已选 ${selected.size} 个分组`}</small>
       </div>
       {loading ? (
-        <div className="weq-exp-cats-empty">
-          <small>加载中…</small>
-        </div>
+        <ChipsSkeleton />
       ) : items.length === 0 ? (
         <div className="weq-exp-cats-empty">
           <small>暂无分组数据</small>
@@ -1745,10 +1935,7 @@ function FriendPreview({
       </div>
       <div className="weq-exp-list">
         {loading ? (
-          <div className="weq-exp-list-state">
-            <Spinner size={18} />
-            加载中…
-          </div>
+          <PickerListSkeleton rows={6} />
         ) : filtered.length === 0 ? (
           <div className="weq-exp-list-state">
             <span>{query ? '没有匹配的好友' : scoped ? '该分组下暂无好友' : '暂无好友'}</span>
@@ -1870,9 +2057,7 @@ function CollectionScope({
           </small>
         </div>
         {loading ? (
-          <div className="weq-exp-cats-empty">
-            <small>正在加载收藏…</small>
-          </div>
+          <ChipsSkeleton />
         ) : total === 0 ? (
           <div className="weq-exp-cats-empty">
             <small>还没有任何收藏</small>
@@ -1920,10 +2105,7 @@ function CollectionScope({
         </div>
         <div className="weq-exp-list">
           {loading ? (
-            <div className="weq-exp-list-state">
-              <Spinner size={18} />
-              加载中…
-            </div>
+            <PickerListSkeleton rows={6} />
           ) : filtered.length === 0 ? (
             <div className="weq-exp-list-state">
               <span>

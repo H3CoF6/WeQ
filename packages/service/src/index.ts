@@ -102,13 +102,7 @@ export type {
 } from './account/user_config';
 export { fetchHomeDress, toPeerDress } from './account/home_dress';
 export type { HomeDressSnapshot, PeerDressSnapshot } from './account/home_dress';
-export {
-  resolveBubbleSkin,
-  legacyBubbleStaticUrl,
-  legacyBubbleAnimationUrl,
-} from './account/bubble_skin';
-export type { BubbleSkin, BubbleSlice, BubbleSource } from './account/bubble_skin';
-// 新装扮系统（cache/config 分离）
+export type { BubbleSkin, BubbleSlice } from './account/bubble_skin';
 export { DressService, createDressService } from './account/dress_service';
 export { DressConfigService } from './account/dress_config';
 export { DressSharedCache, fontFamilyFor } from './account/dress_shared_cache';
@@ -119,15 +113,6 @@ export type {
 } from './account/dress_service';
 export type { DressScope, DressBackgroundSource } from './account/dress_config';
 export type { BubbleSidecar, PendantSidecar } from './account/dress_shared_cache';
-// 旧装扮系统（已废弃，仅工具函数保留）
-export { DressInstallService } from './account/dress_install';
-export {
-  extractFromZip,
-  extractAllFromZip,
-  extractFirstTtf,
-  isRenderableSfnt,
-} from './account/dress_install';
-export type { PendantAnimation } from './account/dress_install';
 export { MsgDecorationCacheService } from './account/msg_decoration';
 export type { ResolvedMsgDecoration, ResolvedWidget } from './account/msg_decoration';
 export {
@@ -136,7 +121,7 @@ export {
   normalizeMallItems,
   DressAppId,
 } from './account/web/dress_mall';
-export type { DressMallItem, BubbleMaterial } from './account/web/dress_mall';
+export type { DressMallItem } from './account/web/dress_mall';
 export { AccountMonitorService } from './account/monitor';
 export {
   MediaDownloadService,
@@ -152,6 +137,8 @@ export { ExternalRkeyService } from './account/external_rkey';
 export { normalizeNapcatBaseUrl, fetchNapcatRkeys } from './account/rkey_server';
 export type { NapcatRkeyServerResult } from './account/rkey_server';
 export { RecentContactService } from './account/recent_contact';
+export { GuildDirectService, guildAvatarUrlFromMeta } from './account/guild_direct';
+export type { GuildDirectSessionView, RenderGuildDirectMsg } from './account/guild_direct';
 export { HiddenSessionService } from './account/hidden_session';
 export type { HiddenSessionSummary } from './account/hidden_session';
 export { DeletedSessionService } from './account/deleted_session';
@@ -162,6 +149,7 @@ export { ServiceAccountService } from './account/service_account';
 export type { ServiceAccountSummary } from './account/service_account';
 export { ForwardMsgService } from './account/forward';
 export { MsgService } from './account/msg';
+export * from './account/annual_report';
 export {
   GroupInfoService,
   type RelationGraphData,
@@ -517,6 +505,13 @@ export { getLogDir, getLogger, initLogger, logErrorContext } from './common/logg
 export type { Logger, LoggerContext, LogLevel } from './common/logger';
 export { getHost, setHost } from './common/host';
 export type { HostBridge, SaveTarget } from './common/host';
+export { JsonStore, readJsonFile, writeJsonFileAtomic } from './common/json_store';
+export {
+  sanitizeSegment,
+  uniqueName,
+  safeRelSegments,
+  type SanitizeSegmentOpts,
+} from './common/path_sanitize';
 export {
   TtsService,
   TTS_VENDOR_CATALOG,

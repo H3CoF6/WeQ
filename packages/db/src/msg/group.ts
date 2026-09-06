@@ -376,6 +376,90 @@ export class GroupMsgDb {
   }
 
   /**
+   * Oldest sendTime (column 40050, unix seconds) in the whole table, or null
+   * when empty. Unindexed — a single-pass MIN scan; used once per report open
+   * to derive the first available year, then cached by the caller.
+   */
+  async oldestSendTime(): Promise<bigint | null> {
+    const rows = await this.qq.query(`SELECT MIN("40050") FROM group_msg_table WHERE "40050" > 0`);
+    const value = rows[0]?.[0];
+    return value == null ? null : toBigint(value);
+  }
+
+  /**
+   * The distinct local-time years in which *we* sent at least one group
+   * message. Self marker follows {@link countByDirection}: `senderUid`
+   * (40020) when the caller has the account's own uid resident, else
+   * `selfUin` (40033). The year is derived with `'localtime'` so buckets line
+   * up with the report's local-midnight year boundaries.
+   *
+   * Returns `[]` when no self marker is supplied — with neither uid nor uin we
+   * cannot tell our rows apart, and claiming every year would be worse than
+   * claiming none (c2c still contributes its own years).
+   */
+  async sentYears(opts: { selfUin?: bigint; senderUid?: string } = {}): Promise<number[]> {
+    const mine = opts.senderUid
+      ? { clause: `"40020" = ? AND "40020" != ''`, value: opts.senderUid as SqlValue }
+      : opts.selfUin !== undefined && opts.selfUin > 0n
+        ? { clause: `"40033" = ?`, value: opts.selfUin as SqlValue }
+        : null;
+    if (!mine) return [];
+    const rows = await this.qq.query(
+      `SELECT DISTINCT CAST(strftime('%Y',"40050",'unixepoch','localtime') AS INTEGER) AS y
+       FROM group_msg_table
+       WHERE "40050" > 0 AND ${mine.clause}`,
+      [mine.value],
+    );
+    return rows.map((row) => Number(row[0] ?? 0)).filter((year) => year > 0);
+  }
+
+  /**
+   * Split the whole table's rows in a time window into sent / received, in ONE
+   * pass. `senderUid` (column 40020, the account's own uid) is the preferred
+   * self marker when the caller already has it resident (e.g. from the
+   * session's `uidMap`); `selfUin` remains as a fallback. A per-group GROUP BY
+   * here would be a separate scan — the report only needs the table-wide
+   * split, so this is the cheapest shape (one scan, no body decode).
+   *
+   * ⚠️ `?` is *positional*: the self marker sits in the SELECT list, so it must
+   *    be bound BEFORE the WHERE-clause params, not appended after them.
+   */
+  async countByDirection(
+    opts: { startTime?: number; endTime?: number; selfUin?: bigint; senderUid?: string } = {},
+  ): Promise<{ sent: number; received: number }> {
+    const conditions: string[] = [];
+    const whereParams: SqlValue[] = [];
+    if (opts.startTime != null && opts.startTime > 0) {
+      conditions.push(`"40050" >= ?`);
+      whereParams.push(BigInt(opts.startTime));
+    }
+    if (opts.endTime != null && opts.endTime > 0) {
+      conditions.push(`"40050" < ?`);
+      whereParams.push(BigInt(opts.endTime));
+    }
+    const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
+    const mineExpr = opts.senderUid
+      ? `CASE WHEN "40020" = ? AND "40020" != '' THEN 1 ELSE 0 END`
+      : `CASE WHEN "40033" = ? THEN 1 ELSE 0 END`;
+    const mineParam: SqlValue = opts.senderUid ?? (opts.selfUin !== undefined ? opts.selfUin : 0n);
+    const rows = await this.qq.query(
+      `SELECT ${mineExpr} AS mine, COUNT(*) AS n
+       FROM group_msg_table${where}
+       GROUP BY 1`,
+      [mineParam, ...whereParams],
+    );
+    let sent = 0;
+    let received = 0;
+    for (const row of rows) {
+      const mine = Number(row[0] ?? 0);
+      const n = Number(row[1] ?? 0);
+      if (mine === 1) sent = n;
+      else received = n;
+    }
+    return { sent, received };
+  }
+
+  /**
    * Batch count messages per group. Returns { groupCode: count }.
    *
    * `opts` adds extra `AND`s onto the same indexed `40027 IN (…)` scan:

@@ -52,8 +52,11 @@ let logoUriCache: string | null | undefined;
  * Locate a CJK-capable TTF/OTF. satori can't read `.ttc` collections, so we
  * prefer a bundled `.ttf`, then Windows' DengXian (`Deng.ttf`, a plain TTF that
  * ships with Win10/11). Throws if none is found — the caller surfaces it.
+ *
+ * Exported so the annual-report export pipeline (same satori+resvg chain) can
+ * reuse the same font resolution instead of duplicating it.
  */
-function loadFont(): Buffer {
+export function loadCjkFont(): Buffer {
   if (fontCache) return fontCache;
   const candidates = [
     resolveResource('assistant', 'fonts', 'cover.ttf'),
@@ -72,9 +75,10 @@ function loadFont(): Buffer {
 function loadLogoUri(): string | null {
   if (logoUriCache !== undefined) return logoUriCache;
   const path = resolveResource('brand', 'logo.png');
-  logoUriCache = path && existsSync(path)
-    ? `data:image/png;base64,${readFileSync(path).toString('base64')}`
-    : null;
+  logoUriCache =
+    path && existsSync(path)
+      ? `data:image/png;base64,${readFileSync(path).toString('base64')}`
+      : null;
   return logoUriCache;
 }
 
@@ -191,37 +195,33 @@ function buildCardTree(spec: CardSpec, width: number, height: number): El {
   }
   if (spec.footer) {
     content.push(
-      el(
-        'div',
-        { display: 'flex', marginTop: 'auto', alignItems: 'center' },
-        [
-          el(
-            'div',
-            {
+      el('div', { display: 'flex', marginTop: 'auto', alignItems: 'center' }, [
+        el(
+          'div',
+          {
+            display: 'flex',
+            alignItems: 'center',
+            fontSize: 16,
+            fontWeight: 600,
+            color: p.pillInk,
+            backgroundColor: p.pillBg,
+            border: `1px solid ${p.pillBorder}`,
+            padding: '8px 15px',
+            borderRadius: 999,
+          },
+          [
+            el('div', {
               display: 'flex',
-              alignItems: 'center',
-              fontSize: 16,
-              fontWeight: 600,
-              color: p.pillInk,
-              backgroundColor: p.pillBg,
-              border: `1px solid ${p.pillBorder}`,
-              padding: '8px 15px',
+              width: 7,
+              height: 7,
               borderRadius: 999,
-            },
-            [
-              el('div', {
-                display: 'flex',
-                width: 7,
-                height: 7,
-                borderRadius: 999,
-                backgroundColor: p.accentInk,
-                marginRight: 9,
-              }),
-              spec.footer,
-            ],
-          ),
-        ],
-      ),
+              backgroundColor: p.accentInk,
+              marginRight: 9,
+            }),
+            spec.footer,
+          ],
+        ),
+      ]),
     );
   }
 
@@ -308,7 +308,7 @@ export async function renderCardPng(spec: CardSpec): Promise<Buffer> {
   const svg = await satori(root as unknown as import('react').ReactNode, {
     width,
     height,
-    fonts: [{ name: 'Cover', data: loadFont(), weight: 400, style: 'normal' }],
+    fonts: [{ name: 'Cover', data: loadCjkFont(), weight: 400, style: 'normal' }],
   });
 
   // Supersample: render the SVG at SCALE× device width, downscaled by the viewer,

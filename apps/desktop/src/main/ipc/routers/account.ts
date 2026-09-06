@@ -21,6 +21,7 @@ import { sampleHitokoto } from '../../hitokoto';
 import { resolveResource } from '../../resource';
 import { procedure, router } from '../trpc';
 import { dbExplorerRouter } from './db_explorer';
+import { annualReportRouter } from './annual_report';
 import { antiRecallRouter } from './anti_recall';
 import { avatarResourceRouter } from './avatar_resource';
 import { sysEmojiRouter } from './sys_emoji';
@@ -85,6 +86,8 @@ import {
   onlineStatusToWire,
   elementsToEditable,
   elementsFromEditable,
+  guildDirectSessionToWire,
+  guildDirectMsgToWire,
   type ChatMsgWire,
 } from '../serde';
 
@@ -247,6 +250,43 @@ const decryptDbInput = z.object({
 const groupAlbumInput = z.object({
   groupCode: z.string().min(1),
 });
+
+/** 个人空间相册列表入参：hostUin = 该空间的 QQ 号（自己或好友）。 */
+const qzoneAlbumListInput = z.object({
+  hostUin: z.string().min(1),
+});
+
+/** 相册内媒体分页入参：topicId = 相册列表里的 album.id。 */
+const qzoneAlbumMediaInput = z.object({
+  hostUin: z.string().min(1),
+  topicId: z.string().min(1),
+  pageStart: z.number().int().min(0).optional().default(0),
+  pageNum: z.number().int().min(1).max(100).optional().default(30),
+});
+
+/** 相册视频本体入参：picKey = 媒体列表里的 lloc/sloc。 */
+const qzoneAlbumVideoUrlInput = z.object({
+  hostUin: z.string().min(1),
+  topicId: z.string().min(1),
+  picKey: z.string().min(1),
+});
+
+/** 待导出的相册媒体条目（多选下载用，对齐 QzoneAlbumPhoto wire）。 */
+const qzoneAlbumMediaItemInput = z.object({
+  id: z.string().min(1),
+  name: z.string().optional(),
+  url: z.string().min(1),
+  isVideo: z.boolean().optional(),
+  picKey: z.string().optional(),
+});
+
+const exportQzoneAlbumMediaInput = z.object({
+  hostUin: z.string().min(1),
+  topicId: z.string().min(1),
+  outputDir: z.string().min(1),
+  items: z.array(qzoneAlbumMediaItemInput).min(1),
+  concurrency: z.number().int().min(1).max(8).optional(),
+});
 /** 导出装扮资源（气泡 / 字体 / 挂件），缺省不导出。 */
 const dressInput = z
   .object({
@@ -305,6 +345,17 @@ export interface AlbumExportResult {
     albumTitle: string;
     fileName: string;
     url: string;
+    error: string;
+  }>;
+}
+
+export interface QzoneAlbumMediaExportResult {
+  outputDir: string;
+  total: number;
+  ok: number;
+  failed: Array<{
+    name: string;
+    fileName: string;
     error: string;
   }>;
 }
@@ -768,6 +819,70 @@ async function exportGroupAlbums(
   return { outputDir: input.outputDir, total: work.length, ok, failed };
 }
 
+/**
+ * 并发下载选中的个人空间相册媒体到 `outputDir`。与 {@link exportGroupAlbums}
+ * 共用同一套下载工具函数；区别是个人相册列表只给视频封面，下载视频前按
+ * picKey 现取 mp4 本体（签名会过期），取不到则回退封面图。
+ */
+async function exportQzoneAlbumMedia(
+  services: AccountServices,
+  input: z.infer<typeof exportQzoneAlbumMediaInput>,
+): Promise<QzoneAlbumMediaExportResult> {
+  requireOnlineQqForWeb(services);
+
+  const work: Array<{
+    isVideo: boolean;
+    url: string;
+    picKey: string;
+    targetPath: string;
+  }> = [];
+  const used = new Set<string>();
+  input.items.forEach((item, index) => {
+    const fileName = uniqueFilename(
+      filenameFromUrl(item.url, item.name ?? '', index, item.isVideo ? '.mp4' : '.jpg'),
+      used,
+    );
+    work.push({
+      isVideo: Boolean(item.isVideo),
+      url: item.url,
+      picKey: item.picKey ?? '',
+      targetPath: join(input.outputDir, fileName),
+    });
+  });
+
+  const failed: QzoneAlbumMediaExportResult['failed'] = [];
+  let ok = 0;
+  await mkdir(input.outputDir, { recursive: true });
+  await runWithConcurrency(work, input.concurrency ?? 4, async (item) => {
+    try {
+      let url = item.url;
+      if (item.isVideo && item.picKey) {
+        try {
+          const mp4 = await services.webQuery.getQzoneAlbumVideoUrl(
+            input.hostUin,
+            input.topicId,
+            item.picKey,
+          );
+          if (mp4) url = mp4;
+        } catch {
+          // 本体取不到就下封面图，不中断整个任务。
+        }
+      }
+      await mkdir(dirname(item.targetPath), { recursive: true });
+      await downloadAlbumUrl(url, item.targetPath);
+      ok += 1;
+    } catch (e) {
+      failed.push({
+        name: item.url,
+        fileName: basename(item.targetPath),
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  });
+
+  return { outputDir: input.outputDir, total: work.length, ok, failed };
+}
+
 async function exportGroupFiles(
   services: AccountServices,
   input: z.infer<typeof exportGroupFilesInput>,
@@ -834,6 +949,8 @@ async function exportGroupFiles(
 export const accountRouter = router({
   // ---- database explorer (SQLiteStudio-style browse / query / edit) ----
   dbExplorer: dbExplorerRouter,
+  // ---- 年度报告（manifest-first, account-scoped）----
+  annualReport: annualReportRouter,
   // ---- 防撤回（拦截 QQ 撤回的 SQL 触发器 + 按会话选择）----
   antiRecall: antiRecallRouter,
   // ---- local avatar cache browser (nt_data/avatar/*) ----
@@ -1576,6 +1693,119 @@ export const accountRouter = router({
       }),
     )
     .query(({ input }) => fetchFrom(input.kind, input.conv, BigInt(input.sinceSeq), input.limit)),
+
+  /**
+   * QQ 频道私聊会话列表（direct_node_list_table）。只读会话表，绝不回扫
+   * guild_msg_table 补全；40051 最新消息预览一并返回。
+   */
+  guildDirectListSessions: procedure.query(async () => {
+    const sessions = await requireServices().guildDirect.listSessions();
+    return sessions.map(guildDirectSessionToWire);
+  }),
+
+  /** 频道私聊最新 N 条消息（seq 大到小）。nodeId = 会话 40027。 */
+  guildDirectLatest: procedure
+    .input(
+      z.object({
+        nodeId: z.string().min(1),
+        limit: z.number().int().min(1).max(200).default(50),
+      }),
+    )
+    .query(async ({ input }) => {
+      const msgs = await requireServices().guildDirect.getLatest(input.nodeId, input.limit);
+      return msgs.map(guildDirectMsgToWire);
+    }),
+
+  /** 比 beforeSeq 更旧的一页频道私聊消息（向上滚动），返回仍为 seq 大到小。 */
+  guildDirectBefore: procedure
+    .input(
+      z.object({
+        nodeId: z.string().min(1),
+        beforeSeq: z.string().min(1),
+        limit: z.number().int().min(1).max(200).default(50),
+      }),
+    )
+    .query(async ({ input }) => {
+      const msgs = await requireServices().guildDirect.getBefore(
+        input.nodeId,
+        BigInt(input.beforeSeq),
+        input.limit,
+      );
+      return msgs.map(guildDirectMsgToWire);
+    }),
+
+  /**
+   * 频道私聊导出（QQ 频道私聊 / guild_msg.db）。
+   *
+   * 与「完整消息格式」同款多格式 / 媒体 / 装扮 / 头像流水线，唯一差别：
+   * 不支持漫游消息补全（IPC 侧强制 completeMessages=false）。消息源按 nodeId
+   * 走 guild_msg_table，身份快照（对方 tinyId / 昵称 / 头像 + 自己 QQ 号 /
+   * 昵称）由服务端一次性组装并随任务持久化。
+   */
+  guildDirectStartExport: procedure
+    .input(
+      z.object({
+        /** 会话 40027 node id（消息分页键）。 */
+        nodeId: z.string().min(1),
+        /** 任务显示名（对方昵称）。 */
+        name: z.string().min(1),
+        format: z.enum(['json', 'jsonl', 'txt', 'csv', 'xlsx', 'html']),
+        /** 多格式导出：一次任务产出多个文件进同一 bundle（媒体只带一份）。 */
+        formats: z.array(z.enum(['json', 'jsonl', 'txt', 'csv', 'xlsx', 'html'])).optional(),
+        /** Also export every sender's avatar into an avatars/ subfolder. */
+        exportAvatar: z.boolean().optional(),
+        /** ChatLab interchange format (json/jsonl carry ChatLab structure). */
+        chatlab: z.boolean().optional(),
+        /** 导出装扮资源（气泡 / 字体 / 挂件，只导出会话实际用到的款）。 */
+        dress: dressInput,
+        /** Media export: copy local media into media/ and CDN-complete images. */
+        media: z
+          .object({
+            exportMedia: z.boolean(),
+            completeMessages: z.boolean(),
+            completeMedia: z.boolean(),
+            downloadVideo: z.boolean(),
+            downloadFile: z.boolean(),
+            downloadPtt: z.boolean(),
+            transcribeVoice: z.boolean(),
+            /** 导出媒体时按类别筛选（图片 / 语音 / 视频 / 文件 / QQ 系统表情）。 */
+            mediaKinds: z
+              .object({
+                image: z.boolean(),
+                voice: z.boolean(),
+                video: z.boolean(),
+                file: z.boolean(),
+                sysface: z.boolean(),
+              })
+              .optional(),
+            /** 下载本地未缓存的装扮资源。 */
+            completeDress: z.boolean().optional(),
+          })
+          .optional(),
+        /** Inclusive send-time window (unix seconds); null bound = open-ended. */
+        range: z.object({ start: z.number().nullable(), end: z.number().nullable() }).optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const services = requireServices();
+      const guild = await services.guildDirect.buildExportMeta(input.nodeId);
+      const total = await services.guildDirect.countMessages(input.nodeId);
+      return services.exportManager.startTask({
+        kind: 'c2c',
+        conv: guild.peerTinyId,
+        name: input.name,
+        format: input.format,
+        ...(input.formats?.length ? { formats: input.formats } : {}),
+        total,
+        ...(input.exportAvatar ? { exportAvatar: true } : {}),
+        ...(input.chatlab ? { chatlab: true } : {}),
+        ...(input.dress ? { dress: input.dress } : {}),
+        // 频道私聊不支持漫游消息：不论前端怎么勾，补全始终关闭。
+        ...(input.media ? { media: { ...input.media, completeMessages: false } } : {}),
+        ...(input.range ? { range: input.range } : {}),
+        guild,
+      });
+    }),
 
   /** Get detailed profile for the currently logged-in user. */
   getSelfProfile: procedure.query(async () => {
@@ -2522,6 +2752,50 @@ export const accountRouter = router({
     return collectAlbumMedia(services, input.groupCode, input.albumId);
   }),
 
+  // ---- 个人空间相册（QQ 空间 · 空间相册查看器）----
+
+  /**
+   * 某个 QQ 空间（自己或好友）的相册列表。走 qzone web cgi，需要在线 QQ ——
+   * p_skey 可由 ptlogin2 本地快速登录兜底，无需注入 / ClientKey。
+   */
+  qzoneAlbumList: procedure.input(qzoneAlbumListInput).query(async ({ input }) => {
+    const services = requireServices();
+    requireOnlineQqForWeb(services);
+    return services.webQuery.getQzoneAlbums(input.hostUin);
+  }),
+
+  /**
+   * 某个相册内的媒体（照片 / 视频）列表，分页。`topicId` = 相册列表里的
+   * `album.id`；`pageStart` 偏移 + `pageNum` 页大小支持深翻。同样需要在线 QQ。
+   */
+  qzoneAlbumMedia: procedure.input(qzoneAlbumMediaInput).query(async ({ input }) => {
+    const services = requireServices();
+    requireOnlineQqForWeb(services);
+    return services.webQuery.getQzoneAlbumPhotos(
+      input.hostUin,
+      input.topicId,
+      input.pageStart,
+      input.pageNum,
+    );
+  }),
+
+  /** 相册视频本体 mp4 URL（列表只给封面，播放/下载前按 picKey 现取）。 */
+  qzoneAlbumVideoUrl: procedure.input(qzoneAlbumVideoUrlInput).query(async ({ input }) => {
+    const services = requireServices();
+    requireOnlineQqForWeb(services);
+    return services.webQuery.getQzoneAlbumVideoUrl(input.hostUin, input.topicId, input.picKey);
+  }),
+
+  /** Folder dialog for qzone album media export output. */
+  pickQzoneAlbumExportDir: procedure.mutation(async () => {
+    return getHost().pickDirectory({ title: '选择空间相册保存文件夹' });
+  }),
+
+  /** 并发下载选中的空间相册媒体（照片原图 / 视频本体）到所选文件夹。 */
+  exportQzoneAlbumMedia: procedure.input(exportQzoneAlbumMediaInput).mutation(async ({ input }) => {
+    return exportQzoneAlbumMedia(requireServices(), input);
+  }),
+
   /** Folder dialog for group album export output. */
   pickGroupAlbumExportDir: procedure.mutation(async () => {
     return getHost().pickDirectory({ title: '选择群相册保存文件夹' });
@@ -2715,17 +2989,20 @@ export const accountRouter = router({
     }),
 
   /**
-   * Start a friend-QZone (说说) export. Requires an online QQ (the web CGI needs
-   * this account's skey/pskey). `conv` carries the friend's uin. Media = 配图.
+   * Start a QZone (说说) export — 目标可以是好友或自己（`conv` 承载目标 uin）。
+   * Requires an online QQ (the web CGI needs this account's skey/pskey).
+   * Media = 配图。HTML 格式会强制下载配图（task_manager 内保证）。
    */
   startQzoneExport: procedure
     .input(
       z.object({
         targetUin: z.string().min(1),
         name: z.string().min(1),
-        format: z.enum(['json', 'txt']),
-        /** 多格式导出：json / txt 一次任务全出。 */
-        formats: z.array(z.enum(['json', 'txt'])).optional(),
+        format: z.enum(['json', 'txt', 'html']),
+        /** 多格式导出：json / txt / html 一次任务全出。 */
+        formats: z.array(z.enum(['json', 'txt', 'html'])).optional(),
+        /** 补全互动：按 tid 拉取评论 + 点赞（空间动态页 HTML 解析，best-effort，需在线 QQ）。 */
+        includeInteraction: z.boolean().optional(),
         downloadMedia: z.boolean(),
         range: z.object({ start: z.number().nullable(), end: z.number().nullable() }).optional(),
       }),
@@ -2740,6 +3017,7 @@ export const accountRouter = router({
         name: input.name,
         format: input.format,
         ...(input.formats?.length ? { formats: input.formats } : {}),
+        ...(input.includeInteraction ? { qzoneInteractions: true } : {}),
         total: 0,
         media: {
           exportMedia: input.downloadMedia,

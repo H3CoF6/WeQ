@@ -42,6 +42,7 @@ import { getQqProtocolExe } from './qq_protocol_cache';
 import { createLinuxInjectHook } from '../inject_elevation';
 import {
   accountConfigId,
+  AnnualReportService,
   UserConfigService,
   Win32DetectService,
   Win32KeyService,
@@ -56,6 +57,7 @@ import {
   RecentContactService,
   HiddenSessionService,
   DeletedSessionService,
+  GuildDirectService,
   OfficialAccountService,
   ServiceAccountService,
   UnreadInfoService,
@@ -375,12 +377,16 @@ export interface BootstrapServices {
 export interface AccountServices {
   msgs: MsgService;
   recentContacts: RecentContactService;
+  /** QQ 频道私聊会话与消息（guild_msg.db / guild1.db，静态本地读取）。 */
+  guildDirect: GuildDirectService;
   hiddenSessions: HiddenSessionService;
   deletedSessions: DeletedSessionService;
   officialAccount: OfficialAccountService;
   serviceAccount: ServiceAccountService;
   unreadInfo: UnreadInfoService;
   accountConfig: AccountConfigService;
+  /** Manifest-first, compile-time annual report page service. */
+  annualReport: AnnualReportService;
   forwardMsgs: ForwardMsgService;
   groupInfo: GroupInfoService;
   /** One-on-one (c2c) chat analytics for the private-chat analysis page. */
@@ -849,7 +855,6 @@ export function initAppContext(): AppContext {
       const dressInstall = createDressService(
         platform.native.ntHelper,
         platform.native.ntHelper,
-        bootstrap.avatarCache,
         dressConfigDir,
         sharedDressCache,
         resolveOnlinePid,
@@ -894,15 +899,20 @@ export function initAppContext(): AppContext {
         resolveOnlinePid,
         join(userConfig.cacheDir('roam-msg'), `${session.context.uin}.db`),
       );
+      const guildDirect = new GuildDirectService(session);
       this.services = {
         msgs: new MsgService(session, deletedMsgs, antiRecall),
         recentContacts: new RecentContactService(session),
+        guildDirect,
         hiddenSessions: new HiddenSessionService(session),
         deletedSessions: new DeletedSessionService(session),
         officialAccount: new OfficialAccountService(session),
         serviceAccount: new ServiceAccountService(session),
         unreadInfo: new UnreadInfoService(session),
         accountConfig,
+        annualReport: new AnnualReportService(session, {
+          preferences: accountConfig.getRecord()?.annualReport,
+        }),
         forwardMsgs: new ForwardMsgService(session, platform.native.ntHelper, resolveOnlinePid),
         groupInfo,
         buddyAnalytics: new BuddyAnalyticsService(session),
@@ -963,6 +973,7 @@ export function initAppContext(): AppContext {
           userConfig.cacheDir(join('export', exportConfigId)),
           {
             // Cache-first avatar resolution for the 导出头像 option.
+            guildDirect,
             avatarCache: bootstrap.avatarCache,
             // rkey-backed CDN image completion (媒体补全).
             mediaDownload,
@@ -1016,8 +1027,14 @@ export function initAppContext(): AppContext {
                 return uin ? { uid: '', uin, nick: '' } : null;
               },
             },
-            // 好友 QQ 空间说说导出：翻页拉取能力（需在线 QQ）。
-            qzone: { fetchMsgList: (uin, pos, num) => webQuery.getQzoneMsgList(uin, pos, num) },
+            // 好友 QQ 空间说说导出：翻页拉取 + 评论/点赞补全能力（需在线 QQ）。
+            qzone: {
+              fetchMsgList: (uin, pos, num) => webQuery.getQzoneMsgList(uin, pos, num),
+              fetchInteractions: (uin, targets) => webQuery.getQzoneInteractions(uin, targets),
+              // 点赞权威源：动态页 HTML 偶发不渲染 user-list，空赞的帖子用
+              // r.qzone qz_opcnt2 补一轮名单（导出时自动触发，失败则保留 HTML 结果）。
+              fetchLikes: (uin, tid) => webQuery.getQzoneLikes(uin, tid),
+            },
             // 联系人导出（好友 / 群成员）：本地资料库拉取，bigint 归一化为字符串。
             contacts: {
               listBuddies: async (limit, offset) => {
@@ -1333,7 +1350,6 @@ export function initAppContext(): AppContext {
       const dressInstall = createDressService(
         platform.native.ntHelper,
         platform.native.ntHelper,
-        bootstrap.avatarCache,
         dressConfigDir,
         sharedDressCache,
         livePid,
@@ -1375,15 +1391,20 @@ export function initAppContext(): AppContext {
         livePid,
         join(userConfig.cacheDir('roam-msg'), `${session.context.uin}.db`),
       );
+      const guildDirect = new GuildDirectService(session);
       this.services = {
         msgs: new MsgService(session, deletedMsgs, antiRecall),
         recentContacts: new RecentContactService(session),
+        guildDirect,
         hiddenSessions: new HiddenSessionService(session),
         deletedSessions: new DeletedSessionService(session),
         officialAccount: new OfficialAccountService(session),
         serviceAccount: new ServiceAccountService(session),
         unreadInfo: new UnreadInfoService(session),
         accountConfig,
+        annualReport: new AnnualReportService(session, {
+          preferences: accountConfig.getRecord()?.annualReport,
+        }),
         forwardMsgs: new ForwardMsgService(session, platform.native.ntHelper, livePid),
         groupInfo,
         buddyAnalytics: new BuddyAnalyticsService(session),
@@ -1442,6 +1463,7 @@ export function initAppContext(): AppContext {
           new MsgService(session),
           userConfig.cacheDir(join('export', exportConfigId)),
           {
+            guildDirect,
             avatarCache: bootstrap.avatarCache,
             mediaDownload,
             mediaUrl,
@@ -1488,7 +1510,13 @@ export function initAppContext(): AppContext {
                 return uin ? { uid: '', uin, nick: '' } : null;
               },
             },
-            qzone: { fetchMsgList: (uin, pos, num) => webQuery.getQzoneMsgList(uin, pos, num) },
+            qzone: {
+              fetchMsgList: (uin, pos, num) => webQuery.getQzoneMsgList(uin, pos, num),
+              fetchInteractions: (uin, targets) => webQuery.getQzoneInteractions(uin, targets),
+              // 点赞权威源：动态页 HTML 偶发不渲染 user-list，空赞的帖子用
+              // r.qzone qz_opcnt2 补一轮名单（导出时自动触发，失败则保留 HTML 结果）。
+              fetchLikes: (uin, tid) => webQuery.getQzoneLikes(uin, tid),
+            },
             // 收藏导出：静态账号同样有本地收藏库，可离线导出。
             collection: {
               listCollections: async (limit, offset) => {

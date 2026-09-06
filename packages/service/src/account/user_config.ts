@@ -17,6 +17,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AccountSession } from '@weq/account';
+import type { AnnualReportPreferences } from './annual_report/types';
 import type { DatabaseAlgorithms } from '@weq/native';
 import { getLogger, logErrorContext } from '../common/logger';
 
@@ -116,6 +117,8 @@ export interface AccountConfig {
   avatarUrl?: string;
   /** Unix milliseconds of last login. */
   lastLoginAt: number;
+  /** Per-account annual-report page collection and ordering preferences. */
+  annualReport?: AnnualReportPreferences;
 
   /** True while a logged-in QQ.exe instance for this account is running. */
   qqOnline?: boolean;
@@ -182,6 +185,12 @@ export interface AccountConfig {
      * 这里存 url 而非 itemId —— 背景的目录段是服务端 nonce，推不出来。
      */
     chatBgUrl?: string;
+    /** 正在用的头像挂件 itemId（appId 4）。渲染侧据此换动画帧。 */
+    widgetId?: number;
+    /** 正在用的挂件款名。 */
+    widgetName?: string;
+    /** 正在用的挂件预览图直链（newPreview2）。 */
+    widgetPreviewUrl?: string;
   };
 }
 
@@ -335,6 +344,16 @@ export class AccountConfigService {
     this.logger.info('updated native media binding', {
       event: 'set-native-media-enabled',
       enabled,
+    });
+  }
+
+  /** Persist the user's annual-report page collection and ordering. */
+  setAnnualReportPreferences(annualReport: AnnualReportPreferences): void {
+    this.patch({ annualReport });
+    this.logger.info('stored annual report preferences', {
+      event: 'set-annual-report-preferences',
+      mode: annualReport.mode,
+      enabledCount: annualReport.enabledPageIds.length,
     });
   }
 
