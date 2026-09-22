@@ -3,7 +3,7 @@
   "version": "1.1.1",
   "private": true,
   "type": "module",
-  "description": "QQ NT 本地聊天记录解密、导出、查看与年度报告",
+  "description": "QQ NT \u672c\u5730\u804a\u5929\u8bb0\u5f55\u89e3\u5bc6\u3001\u5bfc\u51fa\u3001\u67e5\u770b\u4e0e\u5e74\u5ea6\u62a5\u544a",
   "license": "GPL-3.0-or-later",
   "packageManager": "pnpm@10.33.2",
   "engines": {
@@ -30,5 +30,10 @@
     "esbuild": "^0.28.1",
     "tsx": "^4.22.4",
     "typescript": "^5.7.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "@xmldom/xmldom": "0.9.12"
+    }
   }
 }
