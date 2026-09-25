@@ -24,6 +24,8 @@ import { useToast } from '../components/Toast';
 import { isDataline, deviceAvatarDataUri } from '../lib/deviceAvatar';
 import { previewNodes, previewNodesToText } from '../lib/conversationPreview';
 import { classifyChatType, datalineName, isDatalineSelfUid } from '@weq/codec';
+import { conversationSortTime, draftSortTimes } from '@weq/service/conversation-order';
+import { localDraftToWrite, setLocalDraft } from '@weq/service/draft-edit';
 import { useProfileResolver } from '../hooks/useProfileResolver';
 import { useGroupMemberResolver } from '../hooks/useGroupMemberResolver';
 import { useGroupMemberSearch } from '../hooks/useGroupMemberSearch';
@@ -59,6 +61,26 @@ import { MemberProfileCard } from '../components/MemberProfileCard';
 import { BuddyAnalyticsDialog } from '../components/BuddyAnalyticsDialog';
 import { GroupBugDialog } from '../components/GroupBugDialog';
 import { AddMessageModal } from '../components/compose/AddMessageModal';
+import { MergeForwardDialog } from '../components/mergeForward/MergeForwardDialog';
+import { MergeForwardLibraryDialog } from '../components/mergeForward/MergeForwardLibraryDialog';
+import {
+  codecElementsToSegs,
+  createEmptyDraft,
+  createNode,
+  draftCardPreview,
+  draftTitle,
+  draftToSendNodes,
+  mfId,
+  renderElementsToSegs,
+  validateDraft,
+  type MfCardPreview,
+  type MfDraft,
+  type MfElement,
+  type MfNode,
+  type MfSeg,
+  type MfTarget,
+} from '../components/mergeForward/model';
+import type { MfPerson } from '../components/mergeForward/SenderPicker';
 import { DeletedMessagesModal } from '../components/compose/DeletedMessagesModal';
 import { RecalledMessagesModal } from '../components/compose/RecalledMessagesModal';
 import { GapMessagesModal } from '../components/compose/GapMessagesModal';
@@ -100,6 +122,9 @@ import {
   type ProfileExtInfo,
   type User,
   useChatShellController,
+  composerTextToElements,
+  elementsToComposerText,
+  toIpcElements,
 } from '../im-template/template';
 import {
   qqMessageRenderer,
@@ -375,6 +400,32 @@ type RawElementWire = NonNullable<
   Awaited<ReturnType<typeof client.account.getRawElements.query>>
 >['elements'];
 
+/**
+ * 一条「乐观渲染」的合并转发消息 —— 只活在前端 state 里。
+ *
+ * 私聊的同步周期很长（群聊也慢），发出去之后不能干等 QQ 把消息同步回来才显示。
+ * 所以发送时先在目标会话末尾插一张同款「聊天记录」卡片，带状态标识；它不写库、
+ * 不落缓存文件，开关应用即消失。
+ */
+type OptimisticForward = {
+  id: string;
+  /** 目标会话 id（模板层 Conversation.id）。 */
+  convId: string;
+  title: string;
+  /** 预览消息条数。 */
+  count: number;
+  /**
+   * 卡片封面预览（标题 / 摘要 / 前 4 行）。与服务端生成的那份同口径（见
+   * `@weq/protocol` 的 buildForwardCardMeta），同步回来后卡片不会变样。
+   */
+  preview: MfCardPreview;
+  state: 'sending' | 'sent' | 'failed';
+  /** 发送成功后的长消息 id（卡片点开可拉取）。 */
+  resId?: string;
+  error?: string;
+  at: number;
+};
+
 type PendingScrollRestore = {
   conversationId: string;
   previousHeight: number;
@@ -410,8 +461,6 @@ const fallbackPreference: ConversationPreference = {
   muted: false,
   blocked: false,
 };
-
-const emptyDrafts: ConversationDrafts = {};
 
 function groupAvatarSrc(groupCode: string): string | null {
   return groupCode ? `https://p.qlogo.cn/gh/${groupCode}/${groupCode}/0` : null;
@@ -984,6 +1033,48 @@ function messageSender(
   return conversation.type === 'direct' ? conversation.otherUser : user;
 }
 
+/**
+ * 乐观渲染的合并转发 → 模板层 Message。
+ *
+ * 渲染成一张同款「聊天记录」卡片（`multiMsg` 元素）——与真消息同步回来后的样子一致，
+ * 因此同步到位后不会出现视觉跳变。状态标识（发送中 / 已发送 / 发送失败）通过额外
+ * 的 `optimistic` 字段带到气泡上，由 MessageBubble 画一个小标签。
+ */
+function optimisticToTemplate(
+  item: OptimisticForward,
+  conversation: Conversation,
+  user: User,
+): Message {
+  return {
+    id: item.id,
+    conversationId: conversation.id,
+    senderId: user.id,
+    sender: user,
+    body: item.title,
+    createdAt: new Date(item.at).toISOString(),
+    qqElements: [
+      {
+        type: 'multiMsg',
+        data: {
+          _label: item.preview.source,
+          _news: item.preview.news,
+          _summary: item.preview.summary,
+          ...(item.resId ? { resId: item.resId } : {}),
+        },
+      },
+    ],
+    msgId: item.id,
+    msgSeq: '',
+    optimistic: item.state,
+    optimisticError: item.error,
+  } as Message & {
+    qqElements: unknown[];
+    msgId: string;
+    optimistic: OptimisticForward['state'];
+    optimisticError?: string;
+  };
+}
+
 function messageToTemplate(
   message: MessageWire,
   conversation: Conversation,
@@ -1257,7 +1348,7 @@ function elementText(element: unknown): string {
     case 'at':
       return stringField(data, 'textContent');
     case 'face':
-      return stringField(data, 'faceText') || stringField(data, 'faceExtDesc') || '[Emoji]';
+      return stringField(data, 'faceText') || stringField(data, 'localPath') || '[Emoji]';
     case 'pic':
       return attachmentText('Image', data, 'fileName', 'summary');
     case 'file':
@@ -1607,6 +1698,13 @@ export function MainView(): ReactElement {
   const officialAccounts = trpc.account.listOfficialAccounts.useQuery();
   const serviceAccounts = trpc.account.listServiceAccounts.useQuery();
   const selfProfile = trpc.account.getSelfProfile.useQuery();
+  // 与互动标识等在线能力使用同一套前置条件：QQ 账号在线，且没有开启
+  // 「完全离线模式」（自动注入 QQ 总闸开启）。状态未读到前按不可发送处理。
+  const sendAccess = trpc.account.getGroupAlbumAccessState.useQuery(undefined, {
+    refetchOnWindowFocus: true,
+    staleTime: 4000,
+    refetchInterval: 5000,
+  });
   const groupBugStatus = trpc.groupFeedback.status.useQuery(undefined, {
     refetchOnWindowFocus: true,
     staleTime: 8000,
@@ -1685,6 +1783,14 @@ export function MainView(): ReactElement {
         void utils.account.listHiddenSessions.invalidate();
         void utils.account.listOfficialAccounts.invalidate();
         void utils.account.listServiceAccounts.invalidate();
+        // 会话列表的排序键：草稿时间（41108）。
+        void utils.account.listConversationDraftTimes.invalidate();
+        // 草稿正文：QQ 客户端写库后也要跟手。`listDrafts` 默认 `staleTime:
+        // Infinity`，不在这里 invalidate 就永远不会重读 —— 这正是「QQ 那边
+        // 写的草稿，WeQ 这边看不到」的原因。安全：下面合并 `draftQuery.data`
+        // 的 effect 只以 `pendingDraftsRef` 覆盖**脏会话**（本次会话里改过、
+        // 还没落库的），正在编辑的正文不会被回灌。
+        void utils.account.listDrafts.invalidate();
         void refreshWindow();
       },
       onError(err) {
@@ -1740,6 +1846,23 @@ export function MainView(): ReactElement {
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [trackedConversationId, setTrackedConversationId] = useState<string | null>(null);
   const [conversationPrefs, setConversationPrefs] = useState<ConversationPreferences>({});
+  // 草稿直接读写 QQ 自己的 draft_storage_table_v1 —— WeQ 不再另存一份缓存。
+  // 这里的内存副本只用来即时回显（边打边显示 / 会话列表的草稿标记），真正落库
+  // 只在「离开会话 / 离开消息页 / 应用退出」时做，见 flushDrafts。
+  const [drafts, setDrafts] = useState<ConversationDrafts>({});
+  /** 本次会话里被改过、还没落库的会话 id。 */
+  const dirtyDraftsRef = useRef<Set<string>>(new Set());
+  /**
+   * 还没落库的草稿正文（输入框实时值）。**刻意用 ref 而不是 state** —— 每敲一个
+   * 字都 setState 会让整棵 MainView 重渲，这是之前输入卡顿的主因。它只在「切会话 /
+   * 离开消息页 / 退出」时被读取并并进 state 或落库。
+   */
+  const pendingDraftsRef = useRef<ConversationDrafts>({});
+  /**
+   * flushDraft 定义在下面（依赖 conversations），但 handleSelectConversation 在它
+   * 之前就要用 —— 用 ref 转发拿最新实现，避免把两个 useCallback 的依赖搅在一起。
+   */
+  const flushDraftRef = useRef<(conversationId: string) => void>(() => {});
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** 打开设置时要先落到哪一屏（损坏弹窗 → 数据库宽容）。 */
   const [settingsSection, setSettingsSection] = useState<SettingsDialogSectionId | undefined>(
@@ -1796,6 +1919,16 @@ export function MainView(): ReactElement {
     elements: RawElementWire;
   } | null>(null);
   const [addMessageConv, setAddMessageConv] = useState<Conversation | null>(null);
+  // 合并转发：从聊天多选进入时带着一份草稿 + 会话成员候选；
+  // 「合成聊天记录」列表则走 MergeForwardLibraryDialog。
+  const [mergeForwardDraft, setMergeForwardDraft] = useState<{
+    draft: MfDraft;
+    senderMode: 'conversation' | 'global';
+    members: MfPerson[];
+  } | null>(null);
+  const [mergeForwardLibraryOpen, setMergeForwardLibraryOpen] = useState(false);
+  // 发出去但还没被 QQ 同步回来的合并转发（乐观渲染；不写库、不落缓存文件）。
+  const [optimisticForwards, setOptimisticForwards] = useState<OptimisticForward[]>([]);
   // "删除列表" panel: which conversation is open + its fetched deleted rows.
   const [deletedConv, setDeletedConv] = useState<Conversation | null>(null);
   const [deletedWires, setDeletedWires] = useState<MessageWire[]>([]);
@@ -2355,6 +2488,26 @@ export function MainView(): ReactElement {
     }
     return map;
   }, [topContacts.data]);
+  /**
+   * 有草稿的会话 → 草稿时间（`recent_contact_v3_table."41108"`）。会话列表排序
+   * 用它和最后消息时间取最大值：打了字（或有草稿）的会话要按草稿时间冒头，
+   * 而不是只看最新消息时间。见 `@weq/service/conversation-order`。
+   *
+   * 单独一条轻量 query（几行的 SELECT），这样 `onDbChanged` 时能跟手刷新排序；
+   * 真正的正文由 `drafts` state 承载，不在这里重读。
+   */
+  const draftTimesQuery = trpc.account.listConversationDraftTimes.useQuery(undefined, {
+    refetchOnWindowFocus: false,
+    staleTime: 5_000,
+  });
+  /**
+   * 会话 id → 排序用草稿时间（毫秒），**只取库里的 `41108`**。输入框里还没落库的
+   * 草稿刻意不参与 —— 排序只认数据库的数据，边打字不该让会话跳位置。
+   */
+  const draftTimeByConv = useMemo(
+    () => draftSortTimes(draftTimesQuery.data ?? []),
+    [draftTimesQuery.data],
+  );
   // 群号 → 群名。隐藏会话面板（MergedSessionPanel）解析群聊显示名也要用它，
   // 提到 conversations useMemo 外面，避免闭包内重复构建两份。
   const groupNameByCode = useMemo(() => {
@@ -2651,7 +2804,8 @@ export function MainView(): ReactElement {
             highlights,
           };
         })
-        // 置顶会话整体排在最前，组内按置顶时间（41103）倒序；其余按最后消息时间倒序。
+        // 置顶会话整体排在最前，组内按置顶时间（41103）倒序；其余按
+        // max(最后消息时间, 草稿时间) 倒序 —— 有草稿的会话不吃亏于「新消息」。
         .sort((a, b) => {
           const aTop = topTimeByConv[a.id];
           const bTop = topTimeByConv[b.id];
@@ -2660,7 +2814,10 @@ export function MainView(): ReactElement {
             if (bTop === undefined) return -1;
             return bTop - aTop;
           }
-          return Date.parse(b.updatedAt) - Date.parse(a.updatedAt);
+          return (
+            conversationSortTime(b.updatedAt, draftTimeByConv[b.id]) -
+            conversationSortTime(a.updatedAt, draftTimeByConv[a.id])
+          );
         })
     );
   }, [
@@ -2677,6 +2834,7 @@ export function MainView(): ReactElement {
     unreadByConv,
     highlightsByConv,
     topTimeByConv,
+    draftTimeByConv,
     botUids,
   ]);
   const groupsById = useMemo(
@@ -2736,6 +2894,214 @@ export function MainView(): ReactElement {
   const isGroup = selectedConversation?.type === 'group';
   const isDirect = selectedConversation?.type === 'direct';
 
+  /* ── 合并转发（合成聊天记录）────────────────────────────────────────────
+   *
+   * 真正发包的接缝是 forwardMergeDraft —— 合并转发的协议（UploadLongMsg）
+   * 由另一分支接入，这里只把参数（SnowLuma 的 ForwardNodePayload 那一套：
+   * userUin / nickname / elements / time / decoration）准备好。 */
+  const mergeForwardSelf: MfPerson = useMemo(
+    () => ({
+      uid: selfProfile.data?.uid ?? '',
+      uin: user.identityValue,
+      name: user.displayName,
+    }),
+    [selfProfile.data?.uid, user],
+  );
+
+  /** 可转发到的会话（好友在前、群聊在后）；合并会话入口不可转发。 */
+  const mergeForwardTargets: MfTarget[] = useMemo(
+    () =>
+      conversations
+        .filter(
+          (c): c is Extract<Conversation, { type: 'group' | 'direct' }> =>
+            c.type === 'group' || c.type === 'direct',
+        )
+        .map((c) =>
+          c.type === 'group'
+            ? {
+                id: c.id,
+                kind: 'group' as const,
+                conv: c.group.identityValue,
+                name: c.group.name,
+                avatarUrl: c.group.avatarUrl,
+              }
+            : {
+                id: c.id,
+                kind: 'c2c' as const,
+                // 发送目标优先用 QQ 号（发送侧按 uin 查 uid 更稳），没拿到才退回 uid。
+                conv: c.otherUser.identityValue || c.otherUser.id,
+                name: c.otherUser.displayName,
+                avatarUrl: c.otherUser.avatarUrl,
+              },
+        ),
+    [conversations],
+  );
+
+  const mergeForwardSendAvailable = Boolean(
+    sendAccess.data?.qqOnline && sendAccess.data.injectEnabled,
+  );
+
+  /** 会话成员（发送人候选；群 → 全部成员，私聊 → 对方）。 */
+  const mergeForwardMembersOf = useCallback((c: Conversation): MfPerson[] => {
+    if (c.type === 'group') {
+      return c.members.map((m) => ({ uid: m.id, uin: m.identityValue, name: m.displayName }));
+    }
+    if (c.type === 'direct') {
+      return [
+        { uid: c.otherUser.id, uin: c.otherUser.identityValue, name: c.otherUser.displayName },
+      ];
+    }
+    return [];
+  }, []);
+
+  /**
+   * 多选的消息 → 一份草稿。
+   *
+   * 关键：**回读每条消息的原始 wire 元素**（`account.getRawElements`）而不是只有
+   * 渲染元素 —— 图片 / 语音这类媒体要从原始元素里拿本机缓存路径，发送时才能真实
+   * 上传；拿不到（或离线）时退化为渲染元素派生的分段（媒体落成文本标签）。
+   */
+  const buildMergeForwardDraft = useCallback(
+    async (messages: Message[]): Promise<MfDraft> => {
+      const now = Math.floor(Date.now() / 1000);
+      const nodes: MfNode[] = [];
+      for (const message of messages) {
+        const sender = message.sender;
+        const senderInfo = {
+          uid: sender?.id ?? message.senderId,
+          uin: sender?.identityValue ?? '',
+          name: sender?.displayName || sender?.identityValue || '未知用户',
+        };
+        const msgId = (message as { msgId?: string }).msgId ?? message.id;
+        let segs: MfSeg[] = [];
+        if (msgId) {
+          try {
+            const raw = await client.account.getRawElements.query({ msgId });
+            if (raw?.elements?.length) segs = codecElementsToSegs(raw.elements);
+          } catch {
+            /* 回读失败就退回渲染元素 */
+          }
+        }
+        if (segs.length === 0) {
+          segs = renderElementsToSegs(
+            ((message as { qqElements?: MfElement[] }).qqElements ?? []) as MfElement[],
+          );
+        }
+        if (segs.length === 0) continue;
+        const parsed = Date.parse(message.createdAt);
+        const node = createNode(
+          senderInfo,
+          segs,
+          Number.isFinite(parsed) ? Math.floor(parsed / 1000) : now,
+        );
+        const decoration = (message as { decoration?: MfNode['decoration'] }).decoration;
+        if (decoration) node.decoration = decoration;
+        if (msgId) node.sourceMsgId = msgId;
+        nodes.push(node);
+      }
+      return { ...createEmptyDraft(), id: mfId('draft'), nodes };
+    },
+    [client],
+  );
+
+  const handleMergeForward = useCallback(
+    (messages: Message[], c: Conversation) => {
+      if (messages.length === 0) return;
+      const members = mergeForwardMembersOf(c);
+      void buildMergeForwardDraft(messages)
+        .then((draft) => setMergeForwardDraft({ draft, senderMode: 'conversation', members }))
+        .catch((error) =>
+          pushToast({
+            tone: 'error',
+            title: '准备转发失败',
+            detail: error instanceof Error ? error.message : String(error),
+          }),
+        );
+    },
+    [buildMergeForwardDraft, mergeForwardMembersOf, pushToast],
+  );
+
+  const persistMergeForwardDraft = useCallback(
+    async (draft: MfDraft) => {
+      await client.mergeForward.save.mutate({
+        id: draft.id,
+        title: draft.title,
+        createdAt: draft.createdAt,
+        nodes: draft.nodes,
+      });
+      void utils.mergeForward.list.invalidate();
+    },
+    [utils],
+  );
+
+  /**
+   * 发送一份合并转发。
+   *
+   * 流程：校验草稿 → 生成协议节点（媒体带本机路径，服务端真实上传 + SsoSendLongMsg）
+   * → **乐观渲染**一张「聊天记录」卡片到目标会话（私聊同步慢，等不到真消息；群聊同样
+   * 受益）。乐观消息只活在前端 state 里，**不落任何缓存 / 不写库**，并带「发送中 /
+   * 已发送 / 发送失败」标识。
+   */
+  const forwardMergeDraft = useCallback(
+    async (draft: MfDraft, target: MfTarget) => {
+      const problem = validateDraft(draft);
+      if (problem) throw new Error(problem);
+      const nodes = draftToSendNodes(draft);
+      const peerType = target.kind === 'group' ? 'group' : 'c2c';
+      const title = draft.title || draftTitle(draft.nodes);
+      const preview = draftCardPreview(draft);
+      const optimisticId = `optimistic-${mfId('of')}`;
+      setOptimisticForwards((current) => [
+        ...current,
+        {
+          id: optimisticId,
+          convId: target.id,
+          title,
+          count: draft.nodes.length,
+          preview,
+          state: 'sending',
+          at: Date.now(),
+        },
+      ]);
+      const patch = (next: Partial<OptimisticForward>): void =>
+        setOptimisticForwards((current) =>
+          current.map((item) => (item.id === optimisticId ? { ...item, ...next } : item)),
+        );
+      try {
+        const outcome = await client.account.sendForward.mutate({
+          peerType,
+          targetId: target.conv,
+          nodes,
+        });
+        if (!outcome.ok) {
+          const reason = outcome.card?.errMsg || outcome.hint || '发送失败';
+          patch({ state: 'failed', error: reason });
+          throw new Error(reason);
+        }
+        patch({ state: 'sent', resId: outcome.resId });
+      } catch (error) {
+        patch({ state: 'failed', error: error instanceof Error ? error.message : String(error) });
+        throw error;
+      }
+    },
+    [client],
+  );
+
+  /**
+   * 把「还没落库的正文」并进 state —— 切走会话后立刻切回来能回填、会话列表的草稿
+   * 标记也要亮。flushDraft 是异步的（落库完成前 state 不会动），所以不能只靠它。
+   */
+  const syncDraftsFromPending = useCallback((): void => {
+    setDrafts((current) => {
+      const next = { ...current };
+      for (const [id, text] of Object.entries(pendingDraftsRef.current)) {
+        if (text.trim()) next[id] = text;
+        else delete next[id];
+      }
+      return next;
+    });
+  }, []);
+
   const handleSelectConversation = useCallback(
     (conversationId: string, event?: React.MouseEvent) => {
       const conv = conversations.find((c) => c.id === conversationId);
@@ -2748,11 +3114,34 @@ export function MainView(): ReactElement {
         return;
       }
       // 真正切换到一个普通会话时才关闭 ARK Feed。
+      // 先同步回填一次草稿，这样切换那一帧 ChatPane 就能拿到目标会话的正文（它只在
+      // conversation.id 变化时读一次 draft）。真正的落库不在这里做 —— 统一交给下面
+      // 监听 `shell.activeConversationId` 的 effect 收口，「返回 / 搜索跳转 / 选择器
+      // 进入」这些不走本函数的路径也能覆盖到。
+      syncDraftsFromPending();
       setArkFeedState(null);
       shell.selectConversation(conversationId);
     },
-    [conversations, shell],
+    [conversations, shell, syncDraftsFromPending],
   );
+
+  /**
+   * 离开会话的**唯一收口点**：`activeConversationId` 一变，就把上一个会话的脏草稿
+   * 写回库。私聊 A 打了一半切到 B ⇒ 这一步落库 A 的草稿（正文为空则清掉）。
+   *
+   * 之所以不用各调用点自己 flush：离开会话有四条路径 —— 点侧边栏、会话内「返回」、
+   * 搜索结果 / 文件跳转、从隐藏 / 删除 / 官方号选择器进入。它们各自调
+   * `shell.selectConversation` 或 `shell.backConversation`，只有第一条以前会落库。
+   * 盯住这一个状态，四条路径就都覆盖了。
+   */
+  const prevActiveConvRef = useRef<string | null>(shell.activeConversationId);
+  useEffect(() => {
+    const prev = prevActiveConvRef.current;
+    prevActiveConvRef.current = shell.activeConversationId;
+    if (!prev || prev === shell.activeConversationId) return;
+    flushDraftRef.current(prev);
+    syncDraftsFromPending();
+  }, [shell.activeConversationId, syncDraftsFromPending]);
 
   // Load the WeQ-deleted msgIds whenever the selected conversation changes so
   // the in-place "deleted" overlay is correct on entry. Stale responses from a
@@ -3191,10 +3580,45 @@ export function MainView(): ReactElement {
     // Create a fast lookup map for member info
     const memberMap = new Map(currentGroupMembers.map((m) => [m.id, m]));
 
-    return loadedMessageWires
+    const real = loadedMessageWires
       .filter((message) => isRenderableMessage(message))
       .map((message) => messageToTemplate(message, selectedConversation, user, memberMap, botUids));
-  }, [loadedMessageWires, selectedConversation, user, currentGroupMembers, botUids]);
+    // 乐观渲染的合并转发接在末尾 —— 它们没有 msgSeq（gap 判定会跳过），只作为
+    // 「我刚刚发出了什么」的即时反馈。
+    const pending = optimisticForwards
+      .filter((item) => item.convId === selectedConversation.id)
+      .map((item) => optimisticToTemplate(item, selectedConversation, user));
+    return [...real, ...pending];
+  }, [
+    loadedMessageWires,
+    selectedConversation,
+    user,
+    currentGroupMembers,
+    botUids,
+    optimisticForwards,
+  ]);
+
+  /**
+   * 真实的合并转发卡片同步回来之后，把对应的乐观条目收掉（靠 resId 对账）。
+   * 私聊同步可能要等一会儿，这段期间乐观卡片就是唯一反馈；一旦真消息到，两者会
+   * 同时出现一张，所以按 resId 去重。未拿到 resId 的条目（发送中 / 失败）保留。
+   */
+  useEffect(() => {
+    if (optimisticForwards.length === 0) return;
+    const seen = new Set<string>();
+    for (const wire of loadedMessageWires) {
+      for (const element of wire.elements ?? []) {
+        if ((element as { type?: string }).type !== 'multiMsg') continue;
+        const resId = (element as { data?: { resId?: string } }).data?.resId;
+        if (resId) seen.add(resId);
+      }
+    }
+    if (seen.size === 0) return;
+    setOptimisticForwards((current) => {
+      const next = current.filter((item) => !item.resId || !seen.has(item.resId));
+      return next.length === current.length ? current : next;
+    });
+  }, [loadedMessageWires, optimisticForwards.length]);
 
   // Deleted messages built through the SAME template pipeline as the live chat,
   // so the panel's bubbles match exactly. The panel only opens for the currently
@@ -3899,8 +4323,199 @@ export function MainView(): ReactElement {
     }));
   }
 
-  function updateDraft(_: string, __: string): void {
-    // 只读浏览器暂不保存草稿，保留回调以满足模板接口。
+  /**
+   * 输入框改动**只记在 ref 里**，不碰 React state —— 每敲一个字都 setState 会让
+   * 整棵 MainView（含侧边栏 + 聊天区）重渲，这正是之前输入卡顿的主因。
+   * 真正的 state 更新与落库都推迟到 flushDraft（离开会话 / 离开消息页 / 退出）。
+   */
+  const updateDraft = useCallback((conversationId: string, value: string): void => {
+    // 清空要**保留 key、存空串**（不是 delete）—— 规则与理由见
+    // `@weq/service/draft-edit`：`delete` 会让「清空了」和「没动过」不可区分，
+    // 落库时就会把上一次的旧正文再写回去。
+    pendingDraftsRef.current = setLocalDraft(pendingDraftsRef.current, conversationId, value);
+    dirtyDraftsRef.current.add(conversationId);
+  }, []);
+
+  // 进入消息页时把 QQ 库里已有的草稿读进来（整表只有几行）。这是唯一一次读 ——
+  // 之后边打边改都只在内存，离开时才写回。
+  const draftQuery = trpc.account.listDrafts.useQuery(undefined, {
+    refetchOnWindowFocus: false,
+    staleTime: Infinity,
+  });
+
+  useEffect(() => {
+    const rows = draftQuery.data;
+    if (!rows) return;
+    const next: ConversationDrafts = {};
+    for (const row of rows) {
+      // 行键里的 targetUid 就是会话 id（c2c 是 uid、群是群号）。
+      const text = elementsToComposerText(row.elements ?? []);
+      if (text.trim()) next[row.targetUid] = text;
+    }
+    // 不覆盖本次会话里已经改过、还没落库的那几条 —— 以 pendingDraftsRef 为准
+    // （state 里的副本可能还没跟上）。
+    const merged: ConversationDrafts = { ...next };
+    for (const id of dirtyDraftsRef.current) {
+      const local = pendingDraftsRef.current[id];
+      if (local) merged[id] = local;
+      else delete merged[id];
+    }
+    setDrafts(merged);
+  }, [draftQuery.data]);
+
+  /**
+   * 把一个会话的草稿写回 QQ 库（或清掉）。**只在离开时调用**：产品决定不做逐字写、
+   * 也不做本地兜底 —— 写不进去就按没草稿处理。
+   */
+  const flushDraft = useCallback(
+    async (conversationId: string): Promise<void> => {
+      if (!dirtyDraftsRef.current.has(conversationId)) return;
+      // 主列表之外，隐藏会话 / 最近删除的会话也可能是当前打字的那个，都要能落库。
+      const conv =
+        conversations.find((c) => c.id === conversationId) ??
+        hiddenConversationsById.get(conversationId) ??
+        deletedConversationsById.get(conversationId);
+      if (!conv) return;
+      const peer =
+        conv.type === 'group'
+          ? ({ kind: 'group', targetUid: conv.group.identityValue } as const)
+          : conv.type === 'direct'
+            ? ({ kind: 'c2c', targetUid: conv.otherUser.id } as const)
+            : null;
+      if (!peer) return;
+      dirtyDraftsRef.current.delete(conversationId);
+      // 脏会话在 pendingDraftsRef 里一定有值（含空串 = 用户已清空）。只读它，
+      // 绝不回退到已落库的旧正文 —— 那正是「删了内容草稿还在」的根因。
+      const text = localDraftToWrite(pendingDraftsRef.current, conversationId);
+      try {
+        await client.account.saveDraft.mutate({
+          kind: peer.kind,
+          targetUid: peer.targetUid,
+          elements: toIpcElements(composerTextToElements(text)),
+        });
+      } catch (e) {
+        // 不做兜底：写不进 QQ 库就丢掉这次草稿（按产品决定）。仍然把本地视为
+        // 未落盘，下次离开时再试一次。
+        dirtyDraftsRef.current.add(conversationId);
+        console.error('[MainView] Failed to save draft:', e);
+        return;
+      }
+      // 落库成功后再同步一次 state —— 会话列表的草稿标记 / 切回来时的回填都读它。
+      // 每次「离开」最多一次，不会退回逐字重渲。
+      // 写库是异步的：期间用户可能又切回这个会话接着改（pending 已变、dirty 已重置）。
+      // 那种情况下这次落库的结果已经不是最新的，state 不能拿它盖掉新正文。
+      if (localDraftToWrite(pendingDraftsRef.current, conversationId) !== text) return;
+      setDrafts((current) => {
+        const next = { ...current };
+        if (text.trim()) next[conversationId] = text;
+        else delete next[conversationId];
+        return next;
+      });
+    },
+    [conversations, hiddenConversationsById, deletedConversationsById],
+  );
+
+  /**
+   * 所有还在钉着的会话离开当前窗口 —— 一次把脏草稿全落库。
+   * 用在「离开消息页」与「应用退出」这两个场合。
+   */
+  const flushAllDirtyDrafts = useCallback((): void => {
+    for (const id of [...dirtyDraftsRef.current]) void flushDraft(id);
+  }, [flushDraft]);
+  flushDraftRef.current = (conversationId: string) => {
+    void flushDraft(conversationId);
+  };
+
+  // 应用退出 / 窗口关闭：尽力写一次，写不进去就算了（产品决定不做兜底）。
+  useEffect(() => {
+    const onUnload = (): void => {
+      for (const id of [...dirtyDraftsRef.current]) {
+        const conv =
+          conversations.find((c) => c.id === id) ??
+          hiddenConversationsById.get(id) ??
+          deletedConversationsById.get(id);
+        if (!conv) continue;
+        const peer =
+          conv.type === 'group'
+            ? { kind: 'group' as const, targetUid: conv.group.identityValue }
+            : conv.type === 'direct'
+              ? { kind: 'c2c' as const, targetUid: conv.otherUser.id }
+              : null;
+        if (!peer) continue;
+        // 同步路径上 fire-and-forget：unload 阶段拿不到 await 的机会。
+        void client.account.saveDraft
+          .mutate({
+            kind: peer.kind,
+            targetUid: peer.targetUid,
+            // 空串 = 清掉草稿（见 `@weq/service/draft-edit`）。
+            elements: toIpcElements(
+              composerTextToElements(localDraftToWrite(pendingDraftsRef.current, id)),
+            ),
+          })
+          .catch(() => undefined);
+      }
+    };
+    window.addEventListener('beforeunload', onUnload);
+    return () => window.removeEventListener('beforeunload', onUnload);
+  }, [conversations, hiddenConversationsById, deletedConversationsById]);
+
+  /**
+   * 发消息还没有接后端（本轮只做前端）。这里**必须抛出**而不是返回成功 ——
+   * composer 以「onSend 正常返回」为发送成功的信号，返回成功会把输入框清空，
+   * 用户会以为发出去了。抛错路径会保留原文，只弹提示。
+   */
+  async function sendMessage(_body: string): Promise<void> {
+    pushToast({
+      tone: 'warning',
+      message: '发送功能尚未接入',
+      detail: '输入框已经启用，但发消息的后端还在接线中，内容已为你保留在输入框里。',
+    });
+    throw new Error('send message is not wired up yet');
+  }
+
+  /**
+   * 私聊「窗口抖动」—— 直接接 protocol：`account.sendWindowShake` 走
+   * `MessageSvc.PbSendMsg` 的 `commonElem serviceType=2` 元素（见
+   * `MessageSendService.sendWindowShake`）。群聊没有这个能力，按钮已经在
+   * ChatPane 里按会话类型藏掉了，这里再兜一层。
+   */
+  async function sendWindowShake(conversation: Extract<Conversation, { type: 'direct' }>) {
+    if (!sendAccess.data?.qqOnline || !sendAccess.data.injectEnabled) {
+      pushToast({
+        tone: 'warning',
+        message: 'QQ 未在线或处于完全离线模式',
+        detail: '窗口抖动需要在线 QQ 实例，请先登录 QQ 并退出完全离线模式后重试。',
+      });
+      throw new Error('qq offline');
+    }
+
+    // 优先给 QQ 号：服务层会顺手补上 uid 一起写进 routingHead，本地 uid 目录里没有
+    // 这个人时也照样发得出去；连 QQ 号都拿不到（只有 uid）才退回 uid 反查。
+    const other = conversation.otherUser;
+    const targetId = /^\d+$/.test(other.identityValue) ? other.identityValue : other.id;
+    let outcome: Awaited<ReturnType<typeof client.account.sendWindowShake.mutate>>;
+    try {
+      outcome = await client.account.sendWindowShake.mutate({ targetId });
+    } catch (error) {
+      // 传输层异常（离线 / 风控 / 原生失败）走这里：弹一次提示再抛，让 ChatPane 收尾。
+      pushToast({
+        tone: 'error',
+        message: '窗口抖动发送失败',
+        detail: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+
+    // 服务端明确拒绝（result != 0）不抛传输异常，只能靠回执判断 —— 不把「调用了」当「发成功」。
+    if (!outcome.ok) {
+      const reason = outcome.errMsg || outcome.hint || '服务端拒绝了这条消息';
+      pushToast({
+        tone: 'error',
+        message: '窗口抖动发送失败',
+        detail: reason,
+      });
+      throw new Error(reason);
+    }
   }
 
   async function noopAsync(): Promise<void> {
@@ -3951,12 +4566,24 @@ export function MainView(): ReactElement {
             }
             friendNoticeCount={contactRequests.length}
             groupNoticeCount={groupRequests.length}
-            onViewChange={shell.switchView}
-            onGoHome={() => shell.switchView('home')}
+            onViewChange={(view) => {
+              // 离开消息页 —— 另一个草稿落库时机。
+              if (shell.view === 'messages' && view !== 'messages') {
+                flushAllDirtyDrafts();
+              }
+              shell.switchView(view);
+            }}
+            onGoHome={() => {
+              if (shell.view === 'messages') {
+                flushAllDirtyDrafts();
+              }
+              shell.switchView('home');
+            }}
             onOpenSettings={() => setSettingsOpen(true)}
             onOpenCollection={() => setCollectionOpen(true)}
             onOpenWonderfulTools={() => openWonderfulToolsAt('key-scan')}
             onOpenDbRepair={() => openWonderfulToolsAt('db-repair')}
+            onOpenMergeForward={() => setMergeForwardLibraryOpen(true)}
             onOpenGuildDirect={() => setGuildDirectOpen(true)}
             onOpenQzoneAlbum={() => setQzoneAlbumOpen(true)}
             onOpenMarketBrowser={() => setMarketBrowserOpen(true)}
@@ -3984,7 +4611,7 @@ export function MainView(): ReactElement {
                     selectedGroupConversationId={shell.selectedGroupConversationId}
                     selectedContactId={shell.selectedContactId}
                     conversationPrefs={conversationPrefs}
-                    drafts={emptyDrafts}
+                    drafts={drafts}
                     contacts={buddyContacts}
                     loading={sidebarLoading}
                     onLoadMoreConversations={loadMoreContacts}
@@ -4083,7 +4710,7 @@ export function MainView(): ReactElement {
                       loadingMessages={loadingInitialMessages}
                       atLatest={anchoredToLatest}
                       conversationPrefs={conversationPrefs}
-                      drafts={emptyDrafts}
+                      drafts={drafts}
                       query={shell.query}
                       onAcceptContactRequest={noopAsync}
                       onRejectContactRequest={noopAsync}
@@ -4105,8 +4732,12 @@ export function MainView(): ReactElement {
                       onGroupMemberSearchChange={setMemberSearchKeyword}
                       onLoadMoreGroupMemberSearch={groupMemberSearch.loadMore}
                       profileLoading={groupDetail.isLoading}
+                      sendAvailable={Boolean(
+                        sendAccess.data?.qqOnline && sendAccess.data.injectEnabled,
+                      )}
                       onOpenNotificationSettings={noopAsync}
-                      onSend={noopAsync}
+                      onSend={sendMessage}
+                      onSendWindowShake={sendWindowShake}
                       onDraftChange={updateDraft}
                       onDraftClear={(_conversationId) => updateDraft(_conversationId, '')}
                       onBackConversation={shell.backConversation}
@@ -4122,6 +4753,7 @@ export function MainView(): ReactElement {
                       onOpenBuddyAnalytics={handleOpenBuddyAnalytics}
                       onOpenGroupMember={handleOpenGroupMember}
                       onAddMessage={handleAddMessage}
+                      onMergeForward={handleMergeForward}
                       onViewDeleted={handleViewDeleted}
                       onViewRecalled={handleViewRecalled}
                       onOpenGapMessages={handleOpenGapMessages}
@@ -4367,6 +4999,28 @@ export function MainView(): ReactElement {
               selfUid={selfProfile.data?.uid}
               onClose={() => setAddMessageConv(null)}
               onInserted={() => void refreshWindow()}
+            />
+          ) : null}
+          {mergeForwardDraft ? (
+            <MergeForwardDialog
+              initialDraft={mergeForwardDraft.draft}
+              self={mergeForwardSelf}
+              senderMode={mergeForwardDraft.senderMode}
+              members={mergeForwardDraft.members}
+              targets={mergeForwardTargets}
+              sendAvailable={mergeForwardSendAvailable}
+              onClose={() => setMergeForwardDraft(null)}
+              onPersist={persistMergeForwardDraft}
+              onForward={forwardMergeDraft}
+            />
+          ) : null}
+          {mergeForwardLibraryOpen ? (
+            <MergeForwardLibraryDialog
+              self={mergeForwardSelf}
+              targets={mergeForwardTargets}
+              sendAvailable={mergeForwardSendAvailable}
+              onClose={() => setMergeForwardLibraryOpen(false)}
+              onForward={forwardMergeDraft}
             />
           ) : null}
           {deletedConv ? (
